@@ -182,15 +182,11 @@ public:
     // — hardness only rescales the ceiling's H3 magnitude, and the ceiling's H3 is
     // structurally ANTI-PHASE to the clipper's, ~180 deg apart, so no k drove the
     // capture's monotonic drive-min->noon H3-H2 ramp; it just walked both through a
-    // shared anti-phase null). A follow-up phase-aware measurement (§3t.5,
-    // analysis/phase_harmonics.py) then showed the anti-phase is GENUINE (not a
-    // notch confound, not a polarity bug — a global inversion cannot change a
-    // RELATIVE phase, and per-stage fundamentals are DC-step-verified): the capture
-    // matches the model's CLIPPER phase at the one conclusive tone (1 kHz, 8 deg
-    // apart) and opposes the ceiling (160 deg). **The real JFET's H3 is
-    // EXPANSIVE-signed** (in-phase with the clipper) — no compressive shape, however
-    // hard its knee, can produce that sign. This core replaces the compressive
-    // sigmoid with a shape whose small-signal cubic term has the OPPOSITE sign.
+    // shared anti-phase null). An earlier phase-aware composite-output
+    // comparison (§3t.5, analysis/phase_harmonics.py) favored an expansive H3
+    // fit basis at one tone. The raw reference WAVs/fixture are unavailable for
+    // independent reproduction, and composite I/O cannot isolate the J201's
+    // harmonic sign. This core substitutes an opposite-signed cubic term.
     //
     //     T(w) = w*(1 + c*w^2) / (1 + (w/L)^2)^(3/2),   c = beta + 3/(2*L^2)
     //
@@ -356,13 +352,12 @@ private:
     // re-implementing a now-piecewise shape in the test and testing the replica.
     // They are pure functions of the fit params; nothing here touches state.
 public:
-    // J201 SQUARE-LAW soft-shaper (Phase-7 capture finding, 2026-07-22): replaces the
-    // former per-polarity tanh. The real B7K's low-drive OD character is even-dominant
-    // (captured H2 ~= -36 dB, H3 ~= -59 dB @ drive-min: a ~23 dB even/odd separation) —
-    // the fingerprint of a JFET common-source SQUARE-LAW transfer (Id ~ (Vgs-Vt)^2 ->
-    // pure H2). A tanh is an ODD map: its w^3 term forces H3 whenever it makes H2, so it
-    // structurally cannot reach that separation (proven by fit — the tanh floored H3 at
-    // ~-50 dB while the capture sits at -59). This shape is LINEAR-CORE + EVEN:
+    // Phenomenological J201-inspired even shaper (historical Phase-7 fit,
+    // 2026-07-22): replaces a former per-polarity tanh. An unarchived composite
+    // low-drive target reportedly had H2 ~= -36 dB, H3 ~= -59 dB (~23 dB apart).
+    // That target is not independently reproducible and cannot uniquely
+    // fingerprint a physical JFET square-law transfer. A tanh fit reportedly
+    // could not reach the target, motivating this LINEAR-CORE + EVEN map:
     //     g(w) = T(w) + (a*s^2/2) * tanh^2(w/s)
     // where T is the linear core, soft-limited per side by the ceiling below (T(w) = w
     // exactly with the ceiling disabled). The bump is EXACTLY EVEN, so it contributes
@@ -402,10 +397,10 @@ public:
     // direction (through an anti-phase null) instead of separating — hardness only
     // rescales the ceiling's H3 magnitude, and a COMPRESSIVE shape's H3 is
     // intrinsically ~180 deg from the clipper's H3 at the chain's output, so no k
-    // could flip it in-phase. A follow-up phase-aware measurement (§3t.5) confirmed
-    // this is genuine (not a notch confound, not a polarity bug): the real JFET's H3
-    // is EXPANSIVE-signed. This core's cubic term is +beta (not the old shape's
-    // implicit -something), so the SIGN itself is now a first-class fit lever.
+    // could flip it in-phase in that historical fit. The composite-output
+    // comparison (§3t.5) motivated an expansive H3 basis but cannot establish
+    // the physical J201's harmonic sign without isolated stage measurements.
+    // This core's cubic term is +beta, making its sign a fit parameter.
     //
     // WHY it stays inert at low drive and preserves the structure the reshape depends on:
     //   * T(0) = 0 and T'(0) = 1 EXACTLY on both sides (independent of beta and L), so

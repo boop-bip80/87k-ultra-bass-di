@@ -27,8 +27,13 @@ jobs:
       - name: Test manifest integrity and offline waveform comparisons
         run: python -m unittest discover -s analysis -p 'test_*.py' -v
 
-      - name: Check independently transcribed clone circuit branch values
-        run: python analysis/spice_reference/verify_coupled_stage.py --print-netlist > /dev/null
+      - name: Install independent circuit simulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice
+
+      - name: Verify coupled clone circuit against real ngspice AC analysis
+        run: python analysis/spice_reference/verify_coupled_stage.py
 
   build-and-test:
     name: ${{ matrix.os }}

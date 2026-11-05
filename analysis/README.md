@@ -44,6 +44,9 @@ python3 analysis/compare_hardware_captures.py \
 ```
 
 The validator can yield `UNVERIFIED` or `REVIEW_REQUIRED`; it never certifies a sound match.
+This comparator accepts **quarter-inch analog output takes only**. The manifest can
+retain authentic balanced-XLR recordings, but their results cannot be graded
+against the plugin's quarter-inch `MasterOut` until a separate XLR model exists.
 The comparator rejects nonzero DC-only WAVs as excitation and checks stationary
 Welch assumptions at both four and sixteen subwindows (repeated sweeps must not
 pose as stationary noise). Possible ADC clipping withholds pedal THD and

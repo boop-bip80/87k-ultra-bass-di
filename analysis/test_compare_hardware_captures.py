@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from scipy import signal
@@ -227,6 +228,20 @@ class HardwareComparisonTests(unittest.TestCase):
         path = root / "manifest.json"
         path.write_text(json.dumps(manifest), encoding="utf-8")
         return path, take
+
+    def test_balanced_xlr_manifest_cannot_be_compared_to_jack_model(self):
+        # The manifest can record an XLR take, but its driver and loading
+        # have no counterpart in the quarter-inch MasterOut model.
+        metadata = {"schema_version": 2, "takes": [{"output": "xlr"}]}
+        with patch.object(Path, "read_text", return_value=json.dumps(metadata)):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                rc = main(["--manifest", "no-real-files.json", "--take-index", "0",
+                           "--render-input", "render-input.wav", "--render", "render.wav"])
+        self.assertEqual(rc, 2)
+        result = json.loads(stream.getvalue())
+        self.assertFalse(result["parity_certified"])
+        self.assertIn("XLR", result["error"])
 
     def test_manifest_selects_hashed_measured_dry_and_reports_unverified_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:

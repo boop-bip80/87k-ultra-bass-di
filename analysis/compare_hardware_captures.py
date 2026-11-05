@@ -485,6 +485,11 @@ def _manifest_paths(path, index):
     if not isinstance(takes, list) or index < 0 or index >= len(takes) or not isinstance(takes[index], dict):
         raise MeasurementError("selected manifest take is absent/invalid")
     take = takes[index]
+    if take.get("output") != "quarter_inch":
+        raise MeasurementError(
+            "only quarter-inch analog output is modeled; a balanced XLR take "
+            "cannot be graded against the MasterOut jack signal"
+        )
     monitor = take.get("dry_monitor")
     if not isinstance(monitor, dict) or monitor.get("measurement_point") != "loaded_pedal_input":
         raise MeasurementError("selected take needs an actual loaded-pedal-input monitor, not just the source WAV")

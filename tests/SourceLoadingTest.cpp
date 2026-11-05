@@ -36,7 +36,8 @@ std::complex<double> schematicTransfer(double hz, double sourceOhms)
 
 // Synchronous sine/cosine projection over exactly ten periods to recover
 // amplitude without sampling-grid dependence on the waveform peak location.
-double measureGainDb(double hz, double fs, double sourceOhms)
+struct Response { double gainDb; double phaseDeg; };
+Response measureResponse(double hz, double fs, double sourceOhms)
 {
     InputBufferSourceLoadProbe stage(sourceOhms);
     stage.prepare(fs);
@@ -58,7 +59,8 @@ double measureGainDb(double hz, double fs, double sourceOhms)
     }
     const double amplitude = (2.0 / static_cast<double>(samples))
                            * std::hypot(inPhase, quadrature);
-    return 20.0 * std::log10(amplitude);
+    return { 20.0 * std::log10(amplitude),
+             std::atan2(quadrature, inPhase) * 180.0 / pi };
 }
 }
 
@@ -132,20 +134,23 @@ int main()
         for (double source : sources)
             for (double hz : frequencies)
             {
-                const double measuredDb = measureGainDb(hz, fs, source);
-                const double analyticDb = 20.0 * std::log10(
-                    std::abs(schematicTransfer(hz, source)));
-                const double errorDb = std::abs(measuredDb - analyticDb);
-                if (errorDb > 0.025)
+                const Response measured = measureResponse(hz, fs, source);
+                const std::complex<double> expected = schematicTransfer(hz, source);
+                const double analyticDb = 20.0 * std::log10(std::abs(expected));
+                const double analyticPhaseDeg = std::arg(expected) * 180.0 / pi;
+                const double gainErrorDb = std::abs(measured.gainDb - analyticDb);
+                const double phaseErrorDeg = std::abs(
+                    std::remainder(measured.phaseDeg - analyticPhaseDeg, 360.0));
+                if (gainErrorDb > 0.025 || phaseErrorDeg > 0.25)
                 {
-                    std::printf("FAIL: fs=%.0f Rsource=%.0f hz=%.0f measured=%.5f ref=%.5f error=%.5f dB\n",
-                                fs, source, hz, measuredDb, analyticDb, errorDb);
+                    std::printf("FAIL: fs=%.0f Rsource=%.0f hz=%.0f gainErr=%.5f dB phaseErr=%.5f deg\n",
+                                fs, source, hz, gainErrorDb, phaseErrorDeg);
                     ++failures;
                 }
             }
 
     const double db100k = 20.0 * std::log10(std::abs(schematicTransfer(1000.0, 100000.0)));
-    std::printf("Input source-load: 32 analytic checks, 3 bit-exact ideal-path checks; "
+    std::printf("Input source-load: 32 analytic magnitude+phase checks, 3 bit-exact ideal-path checks; "
                 "|Zin(1 kHz)|=%.1f kOhm, gain(Rsource=100k, 1kHz)=%.4f dB\n",
                 apparentInputHighHz / 1000.0, db100k);
     std::printf("%s\n", failures == 0 ? "All source-loading tests passed."
