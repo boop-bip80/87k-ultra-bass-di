@@ -295,7 +295,8 @@ class HardwareComparisonTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             report = json.loads(report_path.read_text())
             self.assertTrue(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
-            self.assertTrue(report["declared_input_scale_and_manifest_checks_passed"])
+            # Equal declared volts/FS is not authenticated capture provenance.
+            self.assertFalse(report["declared_input_scale_and_manifest_checks_passed"])
             self.assertFalse(report["parity_certified"])
             self.assertIsNotNone(report["calibrated_output_level_difference_db"])
             mismatched = list(matched)
