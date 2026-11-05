@@ -158,6 +158,12 @@ add_executable(ClipperTest tests/ClipperTest.cpp)
 target_compile_options(ClipperTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ClipperTest COMMAND ClipperTest)
 
+# Validates the *generic* CD4049 inverter's KCL/supply-drop solve, self-bias
+# and interpolation independently of any claims about a retail Ultra PCB.
+add_executable(CmosInverterPhysicsTest tests/CmosInverterPhysicsTest.cpp)
+target_compile_options(CmosInverterPhysicsTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME CmosInverterPhysicsTest COMMAND CmosInverterPhysicsTest)
+
 add_executable(PedalChainTest tests/PedalChainTest.cpp)
 target_link_libraries(PedalChainTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(PedalChainTest PRIVATE ${PEDAL_WARNING_FLAGS})

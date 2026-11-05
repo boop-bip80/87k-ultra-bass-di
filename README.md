@@ -1,20 +1,54 @@
 # Obsidian B7000
 
-![CI](https://github.com/tehguitarist/Obsidian-B7000/actions/workflows/ci.yml/badge.svg?branch=main)
+![CI](https://github.com/boop-bip80/87k-ultra-bass-di/actions/workflows/ci.yml/badge.svg?branch=main)
 [![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://opensource.org/license/agpl-v3)
-[![Downloads](https://img.shields.io/github/downloads/tehguitarist/Obsidian-B7000/total)](https://somsubhra.github.io/github-release-stats/?username=tehguitarist&repository=Obsidian-B7000&page=1&per_page=30)
 
-A bass overdrive/DI preamp plugin (AU/VST3, JUCE 8) modelled on the schematic of a
-**Darkglass B7K**-style circuit and **calibrated to recordings of a B7K Ultra**. Every stage is an
-explicit circuit model — no neural captures, no impulse responses, no sample playback — but the shipped
-build's constants are **fitted to reference captures, not read off the schematic**, and several are far
-from the drawn values. Please read **[Accuracy — what is and isn't true](#accuracy--what-is-and-isnt-true)**
+A bass overdrive/DI preamp plugin (AU/VST3, JUCE 8) modelled on a third-party schematic of a
+**Darkglass B7K**-style circuit and reportedly calibrated to recordings of a B7K Ultra. The DSP uses
+analytic stages rather than neural captures, impulse responses, or sample playback. It includes
+**engineered, non-schematic correction filters**, and the shipped build's constants are **fitted to
+reference captures, not read off the schematic**; several are far from the drawn values. Please read
+**[Accuracy — what is and isn't true](#accuracy--what-is-and-isnt-true)**
 before treating this as a circuit-exact emulation: it is not, and the repository previously said more
 than it could support.
 
+> **Hardware parity status: NOT ESTABLISHED.** This repository does not include a verified schematic of
+> an actual Darkglass B7K Ultra unit, independently reproducible hardware captures, or a release-wide
+> A/B report against a specified pedal revision. The supplied schematic describes PCB Guitar Mania's
+> **Black Mirror VII clone**, not a manufacturer-issued Ultra circuit drawing. Passing DSP tests or
+> matching an ngspice model of that clone is evidence of *model consistency*, **not** of 1:1 accuracy
+> against the retail pedal. See [the accuracy audit](docs/accuracy-audit.md) and the reference sources
+> below. The [schematic provenance ledger](docs/schematic-provenance.md) separates original-manufacturer
+> specifications from DIY-clone component values. The missing evidence must be collected before a
+> parity claim can be made.
+
 ![Obsidian B7000 plugin UI](image.png)
 
-**[⬇ Download the latest release](https://github.com/tehguitarist/Obsidian-B7000/releases/latest)**
+**[Releases from this repository](https://github.com/boop-bip80/87k-ultra-bass-di/releases)**
+
+### What can actually be verified
+
+| Question | Evidence in this repository | Verdict |
+|---|---|---|
+| Does the *drawn-value* DSP follow the Black Mirror VII schematic? | Independent ngspice comparisons plus `SchematicParityTest` | **Partially verified**, within the published frequency/harmonic limits |
+| Does the *shipped fitted* DSP reproduce that schematic's component values? | `FitParams` and the numerical comparisons in the accuracy audit | **No**: 34 fitted constants and three extra correction stages |
+| Does either DSP mode reproduce a physical B7K Ultra over its whole control range? | Earlier results are described, but the raw hardware recordings and acquisition metadata are unavailable | **Not independently verifiable** |
+| Does this plugin reproduce the pedal's full DI hardware and cabinet simulation? | Audio path and plugin implementation | **No**: the balanced XLR DI path is not modelled; version-dependent cab-sim/IR functions are outside this analog model |
+
+The public [Darkglass B7K Ultra manual](https://www.darkglass.com/en-gb/pages/microtubes-b7k-ultra-manual)
+is an authoritative **control/specification** reference, not a component schematic. The
+[Black Mirror VII build documentation](https://www.pachydermpedals.com/blog/pcbguitarmania-build-docs/)
+is a useful **third-party clone** schematic and BOM. These are different evidentiary sources;
+neither proves identical internal component values in a retail B7K Ultra. Details of the validation
+limits and test protocol are in [`docs/reference-measurement-protocol.md`](docs/reference-measurement-protocol.md)
+and `analysis/`. The hardware-reference manifest validator deliberately distinguishes *missing
+evidence* (`UNVERIFIED`, exit 2) from *metadata ready for waveform review* (`REVIEW_REQUIRED`, exit 0);
+neither means physical parity:
+
+```bash
+python3 analysis/validate_hardware_capture.py
+python3 -m unittest discover -s analysis -p 'test_validate_hardware_capture.py'
+```
 
 ## What it is
 
@@ -70,11 +104,12 @@ ngspice reference described under *Accuracy*.
   constants is fitted (34 constants differ from the drawn values). They are listed in
   [`docs/accuracy-audit.md`](docs/accuracy-audit.md) §6.
 
-Two of the twenty-plus circuit blocks — the CD4049UBE clipper and the J201 JFET stage — are the only parts
-that aren't natively WDF/R-C elements. The sourcing behind both nonlinear models is in
+The CD4049UBE clipper and J201 JFET stage are the two principal **nonlinear device models**;
+many of the linear stages are MNA solvers rather than literal chowdsp WDF trees. The sourcing behind
+the nonlinear models is in
 `docs/nonlinear-component-modeling.md`.
 
-Several features aren't on the schematic we traced (an original-B7K clone board) at all — they are
+Several features aren't on the Black Mirror VII third-party schematic at all — they are
 engineered to reproduce documented Ultra behaviour: the **Master** volume stage, the **3-way Attack**
 centre position, the **switchable mid frequencies**, and the second **Distortion** footswitch. See
 `circuit.md`'s `[ENG]` tags. Note the shipped mid caps are no longer the originally-computed table but a
@@ -101,11 +136,12 @@ as a fixed 1 MΩ, the bridged-T treated as unloaded), now fixed — the last two
 shipped calibration was fitted on top of the old structure. Full tables, method, limits, and the list of
 every constant that departs from the drawn board: **[`docs/accuracy-audit.md`](docs/accuracy-audit.md)**.
 
-### Null depth against the reference captures (historical)
+### Historical null-depth figures (unreproducible here)
 
-Sub-sample-aligned null depth against a pre-registered 12-capture set, recorded by earlier sessions
-(gain-matched — shape/phase only; the captures are not in the repo, so this table cannot be reproduced
-from a clone):
+Earlier project notes report sub-sample-aligned null depths against a pre-registered 12-capture set.
+They are gain-matched (shape/phase only, not absolute level); the reference WAVs, acquisition metadata,
+and original run logs **are not committed**, so these historical numbers are **not independently
+verified** and must not be presented as a current hardware-accuracy score:
 
 | Mode / setting | Best null, 100 Hz–8 kHz band (gain-matched) | Reference capture |
 |---|---|---|
@@ -121,7 +157,7 @@ measured before that change.)
 
 ## Performance
 
-Measured by `PerfBenchmark` (`ctest -R PerfBenchmark`), best-of-5 on the real `PedalDSP` chain at
+Historically reported by `PerfBenchmark` (`ctest -R PerfBenchmark`), best-of-5 on the real `PedalDSP` chain at
 48 kHz with **BLEND at 100 % overdrive and DRIVE at 0.85** — i.e. the clipper's worst case, not a
 flattering average. Rebuild and re-run rather than trusting these figures on your own machine: they
 are specific to the box that produced them (Apple Silicon laptop, Release build).
@@ -146,8 +182,8 @@ at 4×/8×.
 (AU is an Apple-only format).
 
 ```bash
-git clone https://github.com/tehguitarist/Obsidian-B7000.git
-cd Obsidian-B7000
+git clone https://github.com/boop-bip80/87k-ultra-bass-di.git
+cd 87k-ultra-bass-di
 
 # Pull in dependencies (JUCE 8, chowdsp_wdf, xsimd)
 git submodule update --init --recursive
@@ -241,4 +277,9 @@ This project is licensed under the [GNU Affero General Public License v3.0](LICE
 (AGPLv3), the same license under which the open-source edition of JUCE is distributed.
 chowdsp_wdf and xsimd are compatible and included under their own license terms in `libs/`.
 
+## Credits
 
+Original Obsidian B7000 source: Leigh Pierce ([@tehguitarist](https://github.com/tehguitarist),
+[source project](https://github.com/tehguitarist/Obsidian-B7000)). This repository is maintained
+under [boop-bip80](https://github.com/boop-bip80); its modifications and test results should be
+judged against the evidence published **here**, not the source project's badges or release downloads.
