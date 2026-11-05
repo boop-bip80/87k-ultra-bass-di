@@ -568,7 +568,7 @@ struct FitParams
 
     // Optional quarter-inch receiving resistance for an independently specified
     // measurement fixture. Default open-circuit preserves the calibrated model.
-    double receiverLoadOhms = std::numeric_limits<double>::infinity();   // fraction of full resistance at the second break
+    double receiverLoadOhms = std::numeric_limits<double>::infinity();
 
     // ---- C21 (100n) inter-stage coupling into the tone stack ----------------
     // The 100n cap is schematic-verified; the resistance it works against is the

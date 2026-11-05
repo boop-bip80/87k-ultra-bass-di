@@ -208,7 +208,9 @@ def _stationary_excitation(dry, fs):
     Sixteen subwindows expose that within-block drift. Neither scale alone
     proves stationarity; stimulus type must still be recorded by the fixture.
     """
-    n = min(len(dry), int(6 * fs), MAX_ANALYSIS_FRAMES)
+    # Screen every sample subsequently used by the Welch H1 estimator.
+    # A short stationary intro must not qualify a later swept-sine segment.
+    n = min(len(dry), MAX_SPECTRAL_FRAMES)
     for count in (4, 16):
         centroids = []
         for part in np.array_split(dry[:n], count):
@@ -632,7 +634,9 @@ def main(argv=None):
             # digital-domain diagnostic; do not interpret its difference as
             # a transistor/op-amp modelling error without voltage matching.
             report["warnings"].append(report["nonlinear_attribution_withheld_reason"])
-        report["hardware_vs_model_nonlinear_attribution_eligible"] = bool(
+        # A passing predicate confirms metadata/declared input scales only;
+        # it cannot authenticate a retail pedal or the output render lineage.
+        report["declared_input_scale_and_manifest_checks_passed"] = bool(
             args.manifest is not None
             and evidence["status"] == "REVIEW_REQUIRED"
             and input_voltage_match is True
@@ -640,6 +644,16 @@ def main(argv=None):
             and render_input_provenance is not None
         )
         if args.manifest is not None:
+            tone = report.get("stationary_single_tone_thd")
+            if tone is not None:
+                # Show separate digital-domain THD values without presenting
+                # their difference as a pedal/model distortion error.
+                tone["thd_difference_percentage_points"] = None
+                tone["caveat"] = (
+                    "unattributed per-track THD only; matched physical input voltage, "
+                    "pedal identity and renderer settings/output lineage require "
+                    "independent verification"
+                )
             report["warnings"].append(
                 "render-input samples verified, but proof the provided render WAV came from that input/settings is still required")
         report["parity_certified"] = False

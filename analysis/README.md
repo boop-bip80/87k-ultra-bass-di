@@ -51,6 +51,14 @@ calibrated frequency/gain grades. Missing or mismatched absolute input-voltage
 scales withhold manifest-backed nonlinear attribution, while retaining raw
 digital-domain diagnostics.
 
+The stationarity check covers the same (up to 1,048,576-frame) window as the
+Welch-H1 frequency estimator, so a stationary introduction cannot hide a later
+sweep. The JSON field `declared_input_scale_and_manifest_checks_passed` is only a
+metadata/input-scale precondition, never permission to attribute circuit errors.
+For manifest comparisons, physical and modeled per-track THD diagnostics remain
+available, but the numerical **THD difference is withheld** pending verified
+pedal identity, electrical input calibration and actual renderer output lineage.
+
 The comparator reports diagnostic differences with `parity_certified=false`, including
 gain/level and only those phase/harmonic measurements supported by actual excitation and
 fixture calibration. A small error on **one** take cannot certify circuitry parity across

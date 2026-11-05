@@ -100,7 +100,7 @@ variants):
 
 ## Testing
 
-`ctest --test-dir build --output-on-failure -j 12` — run the entire suite (29 CTest entries currently declared; execution on a fresh cross-platform runner has not been verified). Includes `ModelSwitchTest`, `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
+`ctest --test-dir build --output-on-failure -j 12` — run the entire suite (29 CTest entries currently declared; execution on a fresh cross-platform runner has not been verified). Includes `ModelSwitchTest` and `SchematicParityTest` (which compares the plugin in the `FitParams::schematic()` configuration against committed ngspice data). Per-stage tests validate each WDF stage
 against the closed-form oracle in `analysis/eq_reference.py`; `ClipperTest`/`JfetStageTest` cover
 the two nonlinear stages; `OSValidationTest`/`OSFidelity` cover oversampling and aliasing;
 `SwitchTransitionTest` covers the switch crossfades; `FinalSweepTest` is a full control sweep (every

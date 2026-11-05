@@ -137,6 +137,22 @@ class HardwareComparisonTests(unittest.TestCase):
         self.assertIsNone(spectrum["magnitude_residual_rms_db"])
         self.assertIn("nonstationary", spectrum["withheld_reason"])
 
+    def test_stationarity_screen_covers_entire_spectral_window(self):
+        # A six-second stationary introduction followed by a one-second sweep
+        # previously escaped screening because Welch graded a longer window.
+        noise = broadband(6.)
+        time = np.arange(FS) / FS
+        sweep = .2 * signal.chirp(time, f0=50., f1=12000., t1=1., method="linear")
+        dry = np.concatenate((noise, sweep))
+        report = compare_arrays(dry, .9 * dry, 1.1 * dry, FS,
+                                output_calibration=(1., 1.))
+        self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
+        self.assertIn("nonstationary", report["frequency_response"]["withheld_reason"])
+        stationary = broadband(7.)
+        clean = compare_arrays(stationary, stationary, stationary, FS,
+                               output_calibration=(1., 1.))
+        self.assertIsNotNone(clean["frequency_response"]["magnitude_residual_rms_db"])
+
     def test_suspected_adc_clipping_withholds_pedal_thd_and_calibrated_grade(self):
         t = np.arange(2 * FS) / FS
         dry = .1 * np.sin(2 * np.pi * 440. * t)
@@ -235,7 +251,7 @@ class HardwareComparisonTests(unittest.TestCase):
             self.assertIsNotNone(report["render_input_audit"])
             self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
             self.assertIsNone(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
-            self.assertFalse(report["hardware_vs_model_nonlinear_attribution_eligible"])
+            self.assertFalse(report["declared_input_scale_and_manifest_checks_passed"])
             self.assertIn("volts-per-FS", report["nonlinear_attribution_withheld_reason"])
             # Equal declared electrical drive scales can satisfy this one gate;
             # an incomplete synthetic manifest can still never certify parity.
@@ -251,6 +267,8 @@ class HardwareComparisonTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             report = json.loads(report_path.read_text())
             self.assertTrue(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
+            self.assertTrue(report["declared_input_scale_and_manifest_checks_passed"])
+            self.assertFalse(report["parity_certified"])
             self.assertIsNotNone(report["calibrated_output_level_difference_db"])
             mismatched = list(matched)
             mismatched[1] = "1.0"  # 0.915 dB hotter physical drive than renderer
