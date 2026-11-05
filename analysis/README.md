@@ -23,6 +23,14 @@ python3 analysis/comprehensive_report.py --os 8
 python3 analysis/matrix_grade.py analysis/reports/comprehensive_data.json
 ```
 
+## Independent circuit reference (`spice_reference/`)
+
+`spice_reference/` holds an ngspice netlist of the drawn schematic (`b7k_spice.py`) and scripts that
+compare the plugin against it — `compare_clean.py`, `compare_od.py`, `compare_clipper.py`,
+`compare_chain.py` — plus `gen_reference.py`, which regenerates `tests/data/schematic_reference.h`
+(the data `ctest -R SchematicParityTest` gates on). It needs `ngspice` on PATH; it shares no code with the
+plugin and needs no captures. Results and caveats: `docs/accuracy-audit.md`.
+
 ## File Reference
 
 | File | What It Does |

@@ -21,6 +21,10 @@ add_subdirectory(libs/chowdsp_wdf)
 get_target_property(_chowdsp_inc chowdsp_wdf INTERFACE_INCLUDE_DIRECTORIES)
 set_target_properties(chowdsp_wdf PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_chowdsp_inc}")
 
+# Optional: build the plugin with FitParams::schematic() (drawn component values, physical CD4049 clipper,
+# no empirical OD correction stages) instead of the capture-calibrated defaults. See docs/accuracy-audit.md.
+option(OBSIDIAN_SCHEMATIC_MODEL "Build the plugin with the as-drawn schematic model instead of the calibrated one" OFF)
+
 juce_add_plugin(ObsidianB7000
     COMPANY_NAME "Leigh Pierce"
     BUNDLE_ID com.leighpierce.obsidianb7000
@@ -80,6 +84,10 @@ target_link_libraries(ObsidianB7000
 target_compile_options(ObsidianB7000 PRIVATE ${PEDAL_WARNING_FLAGS})
 
 # Tests
+if(OBSIDIAN_SCHEMATIC_MODEL)
+    target_compile_definitions(ObsidianB7000 PRIVATE OBSIDIAN_SCHEMATIC_MODEL=1)
+endif()
+
 add_executable(DummyTest tests/DummyTest.cpp)
 target_compile_options(DummyTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME DummyTest COMMAND DummyTest)

@@ -3,8 +3,7 @@
 
 Three columns per control setting:
   spice(drawn)      ngspice, schematic component values, ideal op-amps (what the plugin assumes)
-  plugin(nominal)   OfflineRender with every capture-fitted EQ constant put back to its DRAWN
-                    value (c21R is the one with no single drawn value -- see --c21r)
+  plugin(schematic) OfflineRender --schematic: every capture-fitted constant back to its DRAWN value
   plugin(shipped)   OfflineRender with the shipped FitParams defaults
 
 Metric: dB difference vs spice, 20 Hz - 16 kHz, log-spaced, after *no* gain matching
@@ -21,6 +20,7 @@ from plugin_fr import plugin_fr, sample_at
 
 FREQS = np.geomspace(20, 16000, 120)
 
+# kept for the scripts that import it; --schematic now supplies these (FitParams::schematic())
 NOMINAL_CLEAN = dict(
     midLoCap250=22e-9, midLoCap500=22e-9, midLoCap1k=22e-9, midCapRatioLo=1.0, midWiperRLo=0.0,
     midHiCap750=680e-12, midHiCap1500=680e-12, midHiCap3k=680e-12, midCapRatioHi=10.0,
@@ -58,11 +58,9 @@ def stats(a, b):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--c21r", type=float, default=10e3)
     ap.add_argument("--os", type=int, default=2)
     a = ap.parse_args()
-    nom = dict(NOMINAL_CLEAN, c21R=a.c21r)
-    print(f"{'setting':14s} | {'plugin(nominal) vs spice(drawn)':^36s} | {'plugin(shipped) vs spice(drawn)':^36s}")
+    print(f"{'setting':14s} | {'plugin(--schematic) vs spice(drawn)':^36s} | {'plugin(shipped) vs spice(drawn)':^36s}")
     print(f"{'':14s} | {'rms':>6s} {'max':>6s} {'rmsShp':>7s} {'maxShp':>7s}  | {'rms':>6s} {'max':>6s} {'rmsShp':>7s} {'maxShp':>7s}")
     for name, s in SETTINGS.items():
         fs, Hs = spice_h(s)
@@ -70,7 +68,7 @@ def main():
         knobs = {"--blend": 0, "--master": 1.0}
         for k, v in s.items():
             knobs[KNOB[k]] = v
-        fn, Hn = plugin_fr(knobs, nom, os_factor=a.os)
+        fn, Hn = plugin_fr(knobs, None, os_factor=a.os, extra=["--schematic"])
         fh, Hh = plugin_fr(knobs, None, os_factor=a.os)
         pn = sample_at(fn, Hn, FREQS)
         ph = sample_at(fh, Hh, FREQS)

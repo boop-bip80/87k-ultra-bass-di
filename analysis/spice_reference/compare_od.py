@@ -44,25 +44,21 @@ def main():
     ap.add_argument("--gbw", type=float, default=0.0, help="0 = ideal op-amps")
     a = ap.parse_args()
     gbw = a.gbw or None
-    nominal_eq = dict(c21R=1e12, midLoCap250=22e-9, midLoCap500=22e-9, midLoCap1k=22e-9,
-                      midCapRatioLo=1.0, midWiperRLo=0.0, midHiCap750=680e-12, midHiCap1500=680e-12,
-                      midHiCap3k=680e-12, midCapRatioHi=10.0, midWiperRHi=0.0, trebleWiperR=3300.0,
-                      blendEndStop=0.0)
     hdr = "  ".join(f"{int(x):>6d}" for x in REPORT)
-    print(f"{'case':26s} {'':8s} {hdr}   (dB re 1 V/V)")
+    print(f"{'case':24s} {'':10s} {hdr}   rms/max over 30 Hz-16 kHz")
     for grunt in ("cut", "flat", "boost"):
         for dx in (0.0, 0.5, 1.0):
-            fs, Hs = spice_out(dx, grunt=grunt, gbw=gbw)
+            fs, Hs = spice_out(dx, grunt=grunt, gbw=gbw, P=dict(C21=100e-9))
             sp = sample_at(fs, Hs, REPORT)
             knobs = {"--blend": 1.0, "--level": 1.0, "--drive": dx, "--grunt": grunt, "--master": 1.0}
-            f, H = plugin_fr(knobs, nominal_eq, os_factor=a.os, amp_dbfs=a.amp)
-            pl = sample_at(f, H, REPORT)
-            d_all = sample_at(f, H, FREQS) - sample_at(fs, Hs, FREQS)
             name = f"grunt={grunt:5s} drive={dx:.1f}"
-            print(f"{name:26s} {'spice':8s} " + "  ".join(f"{v:6.1f}" for v in sp))
-            print(f"{'':26s} {'plugin':8s} " + "  ".join(f"{v:6.1f}" for v in pl))
-            print(f"{'':26s} {'diff':8s} " + "  ".join(f"{v:6.1f}" for v in (pl - sp)) +
-                  f"   rms {np.sqrt(np.mean(d_all**2)):5.2f} max {np.max(np.abs(d_all)):5.2f}")
+            print(f"{name:24s} {'spice':10s} " + "  ".join(f"{v:6.1f}" for v in sp))
+            for label, extra in (("schematic", ["--schematic"]), ("shipped", [])):
+                f, H = plugin_fr(knobs, None, os_factor=a.os, amp_dbfs=a.amp, extra=extra)
+                pl = sample_at(f, H, REPORT)
+                d_all = sample_at(f, H, FREQS) - sample_at(fs, Hs, FREQS)
+                print(f"{'':24s} {label+' d':10s} " + "  ".join(f"{v:6.1f}" for v in (pl - sp)) +
+                      f"   {np.sqrt(np.mean(d_all**2)):5.2f}/{np.max(np.abs(d_all)):5.2f}")
 
 
 if __name__ == "__main__":
