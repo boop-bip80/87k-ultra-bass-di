@@ -13,6 +13,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from b7k_spice import build_netlist, run_ac, clipper_netlist, run_tran
 from compare_clipper import harmonics
+from compare_chain import spice_case as chain_spice_case, KIN
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "data", "schematic_reference.h")
 CLEAN_F = [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0]
@@ -62,6 +63,15 @@ def main():
         t, o = run_tran(nl, ["co"], tstop=0.05, tstep=1e-6, tstart=0.03)
         mags, pp = harmonics(t, o["co"], fq)
         L.append('  {"%s", %g, %g, %.4f, {%s}},' % (g, fq, amp, pp, ", ".join("%.3f" % (20 * np.log10(m + 1e-30)) for m in mags)))
+    L.append("};")
+    # end-to-end large signal (BLEND = OD, LEVEL/MASTER max, EQ flat, GRUNT cut, drive 0.5, 440 Hz), op-amps clamped
+    # to the plugin's rail window; the plugin side must use clipPhysical = 1 (the simple model ngspice runs)
+    L.append("struct ChainCase { double freq, drive, ampV; double h[5]; };")
+    L.append("static const ChainCase chain[] = {")
+    for dbfs in (-30, -24, -18, -12, -6):
+        amp = KIN * 10 ** (dbfs / 20)
+        m = chain_spice_case((440.0, amp, 0.5, "cut", 2.9, 2.7))
+        L.append("  {440.0, 0.5, %.6f, {%s}}," % (amp, ", ".join("%.3f" % (20 * np.log10(x + 1e-30)) for x in m[:5])))
     L.append("};")
     L.append("} // namespace schematic_ref")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
