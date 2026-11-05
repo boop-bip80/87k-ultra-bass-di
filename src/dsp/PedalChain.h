@@ -423,6 +423,8 @@ public:
         // stack's real knob-dependent input impedance; the legacy fixed-R HP only runs when it is 0.
         baxandall.setInputCap(f.c21Cap);
         recovery.setComponents(f.btR22, f.btR23, f.btC16, f.btC17);
+        recovery.setCoupledSk(f.btCoupledSk != 0, SallenKeyLPF::kIC4B.r1, SallenKeyLPF::kIC4B.r2,
+                              SallenKeyLPF::kIC4B.c1, SallenKeyLPF::kIC4B.c2);
 
         // RailClamp on EVERY op-amp output (calibration §6 / GATE-4 item). The
         // J201 and CD4049 are deliberately absent: neither is an op-amp, and
@@ -535,7 +537,8 @@ public:
         }
 
         s = odDriveTilt.process(s);
-        s = skB.process(s);
+        if (! recovery.coupledSk())
+            s = skB.process(s);   // coupled mode: IC4_B was solved INSIDE `recovery` (bridged-T + R24 + SK)
         s = skA.process(s);
         return s;
     }
@@ -556,7 +559,7 @@ public:
         t.recovery = recovery.process(t.odCoupling);
         odDriveTilt.observe(buf);
         t.odToneRestore = odDriveTilt.process(odToneRestore.process(t.recovery));
-        t.skB = skB.process(t.odToneRestore);
+        t.skB = recovery.coupledSk() ? t.odToneRestore : skB.process(t.odToneRestore);
         t.skA = skA.process(t.skB);
         return t;
     }

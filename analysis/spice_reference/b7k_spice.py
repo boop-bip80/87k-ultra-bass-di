@@ -78,7 +78,7 @@ def _res(x):
     return max(float(x), 1e-3)
 
 
-def build_netlist(P=None, *, attack="flat", grunt="cut", blend=0.0, level_R=(50e3, 50e3),
+def build_netlist(P=None, *, rails=None, attack="flat", grunt="cut", blend=0.0, level_R=(50e3, 50e3),
                   drive_R=50e3, master_R=(0.0, 100e3), bass=0.5, treble=0.5, lomid=0.5,
                   himid=0.5, gbw=3e6, stim="ac", stim_args="", sections=None,
                   inverter="mos", jfet_model=None, extra=""):
@@ -106,7 +106,12 @@ def build_netlist(P=None, *, attack="flat", grunt="cut", blend=0.0, level_R=(50e
 
     # ---- op-amp subckt: single-pole VCVS, inp inn out ------------------------------------
     A0 = 2e5
-    if gbw is None:
+    if rails is not None:
+        lo, hi = rails
+        fp = (gbw or 1e12) / A0
+        a(f".subckt opa inp inn out\nEg o1 0 inp inn {A0}\nRp o1 o2 1k\nCp o2 0 {1/(2*np.pi*1e3*fp)}\n"
+          f"Bo out 0 V='min(max(V(o2),{lo}),{hi})'\n.ends")
+    elif gbw is None:
         a(f".subckt opa inp inn out\nEg o1 0 inp inn {A0}\nRp o1 o2 1k\nCp o2 0 {1/(2*np.pi*1e3*1e5)}\n"
           f"Eo out 0 o2 0 1\n.ends")
     else:

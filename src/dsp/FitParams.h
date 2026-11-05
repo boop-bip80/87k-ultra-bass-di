@@ -958,6 +958,10 @@ struct FitParams
     double clipC15Cut = 2200.0e-9;         // farads; = schematic C15 (2u2), GRUNT=Cut only
     double odMakeupLowCutDbCut = 2.2;      // dB; GRUNT=Cut only (was effectively 6.0, shared)
 
+    // btCoupledSk = 1 solves the bridged-T TOGETHER with R24 and the IC4_B Sallen-Key (RecoveryBridgedT::
+    // setCoupledSk). The shipped calibration (0) treats the bridged-T as unloaded and the SK as ideal-source
+    // driven, which ngspice of the drawn schematic shows is 1-6 dB too loud between 1 and 8 kHz.
+    int btCoupledSk = 0;
     double btR22 = 100.0e3;
     double btR23 = 33.0e3;
     double btC16 = 680.0e-12;
@@ -1596,6 +1600,7 @@ struct FitParams
     {
         FitParams f;
         f.odEmpirical = 0;
+        f.btCoupledSk = 1;  // bridged-T + R24 + IC4_B solved as one network (RecoveryBridgedT.h)
         f.clipPhysical = 2; // the paper's extended two-MOSFET inverter + R19 sag (see CmosInverterVtc.h)
         f.odTiltEnabled = 0;
         f.blendEndStop = 0.0;

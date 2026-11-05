@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MnaSolve.h"
 #include "RailClamp.h"
 
 // =============================================================================
@@ -30,6 +31,16 @@
 // oracle (analysis/eq_reference.py :: bridged_t_tf, default UNLOADED). The
 // matrix is fixed (no switch), so its 2×2 inverse is precomputed once in
 // prepare(). Cap-stamp / history conventions match TrebleAttack exactly.
+//
+// ---- ⚠ THE "UNLOADED" ASSUMPTION BELOW IS WRONG ABOVE ~1 kHz (measured, 2026-11) ---------------
+// ngspice of the drawn schematic (analysis/spice_reference/compare_od.py, stage taps): with the bridged-T
+// feeding R24 into the IC4_B Sallen-Key, the real node `Nout` sits 1.1 dB below the unloaded stage at
+// 1 kHz, 2.3 dB at 2 kHz, 4.4 dB at 4 kHz and ~6 dB at 8 kHz — because C18/C27 turn the SK input into a
+// frequency-dependent load that the bridged-T's own output impedance (R22/R23/C16) divides against.
+// "Well approximated as open" held only around the 717 Hz notch. `setCoupledSk()` below solves the
+// bridged-T + R24 + IC4_B as ONE network (4 nodes) and returns the SK output; with it on, the plugin
+// matches spice at every stage tap. It is OFF by default (the shipped calibration was fitted on the
+// unloaded model) and ON in FitParams::schematic().
 //
 // ---- Loading (build-plan Phase 4 test caveat) -------------------------------
 // The oracle default is UNLOADED, and so is this stage: Nout feeds R24(10k) in
@@ -84,16 +95,49 @@ public:
         rebuild();
     }
 
-    void reset() noexcept { ieqC16 = ieqC17 = 0.0; }
+    void reset() noexcept { ieqC16 = ieqC17 = ieqC18 = ieqC27 = 0.0; }
+
+    // Solve the bridged-T TOGETHER with R24 and the IC4_B Sallen-Key (unity buffer): nodes
+    // [Nmid, Nout, N1, Kp]. process() then returns the IC4_B OUTPUT (= V(Kp), through its own rail clamp),
+    // and PedalChain must NOT run a separate IC4_B stage. skR1/skR2 = R24/R25, skC1 = C18 (N1 -> out),
+    // skC2 = C27 (Kp -> GND). enable=false restores the legacy unloaded 2-node stage bit-for-bit.
+    void setCoupledSk(bool enable, double skR1 = 10.0e3, double skR2 = 22.0e3, double skC1 = 1.0e-9,
+                      double skC2 = 1.0e-9) noexcept
+    {
+        coupled = enable;
+        r24 = skR1;
+        r25 = skR2;
+        c18 = skC1;
+        c27 = skC2;
+        rebuild();
+        reset();
+    }
+    bool coupledSk() const noexcept { return coupled; }
 
     // Rail-clamp passthroughs (calibration §6) — applied to the BUFFER output.
-    void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); }
-    void setRailVoltages(double vNeg, double vPos) noexcept { rail.setRailVoltages(vNeg, vPos); }
+    void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); railSk.setEnabled(e); }
+    void setRailVoltages(double vNeg, double vPos) noexcept
+    {
+        rail.setRailVoltages(vNeg, vPos);
+        railSk.setRailVoltages(vNeg, vPos);
+    }
 
     // Process one sample (real volts in from the clipper-recovery path, out at Nout).
     inline double process(double x) noexcept
     {
         const double vin = rail.process(x); // unity buffer (op-amp output, clamped)
+
+        if (coupled)
+        {
+            const double rhsC[4] = { vin / r22 + ieqC17, gc16 * vin - ieqC16, ieqC18, ieqC27 };
+            double v[4];
+            mna::matvec<4>(yinv4, rhsC, v);
+            ieqC17 = 2.0 * gc17 * v[0] - ieqC17;              // Nmid - GND
+            ieqC16 = 2.0 * gc16 * (vin - v[1]) - ieqC16;      // Vin - Nout
+            ieqC18 = 2.0 * gc18 * (v[2] - v[3]) - ieqC18;     // N1 - Kp (= IC4_B output)
+            ieqC27 = 2.0 * gc27 * v[3] - ieqC27;              // Kp - GND
+            return railSk.process(v[3]);
+        }
 
         // RHS: source contributions + capacitor history (Ieq).
         //   C17 (a=Nmid, b=GND): RHS[Nmid] += ieqC17
@@ -133,6 +177,27 @@ private:
         yi01 = -b / det;
         yi10 = -c / det;
         yi11 = a / det;
+
+        if (coupled)
+        {
+            gc18 = c18 * twoOverT;
+            gc27 = c27 * twoOverT;
+            const double g22 = 1.0 / r22, g23 = 1.0 / r23, g24 = 1.0 / r24, g25 = 1.0 / r25;
+            double Y[4][4] = {};
+            // Nmid
+            Y[0][0] = g22 + g23 + gc17; Y[0][1] = -g23;
+            // Nout
+            Y[1][0] = -g23; Y[1][1] = g23 + gc16 + g24; Y[1][2] = -g24;
+            // N1 (R24 from Nout; R25 and C18 toward the (+) node / buffer output Kp)
+            Y[2][1] = -g24; Y[2][2] = g24 + g25 + gc18; Y[2][3] = -(g25 + gc18);
+            // Kp = IC4_B (+) node: R25 from N1, C27 to ground, no other load (the buffer supplies C18's current)
+            Y[3][2] = -g25; Y[3][3] = g25 + gc27;
+            double tmp[4][4];
+            if (mna::invert<4>(Y, tmp))
+                for (int i = 0; i < 4; ++i)
+                    for (int j = 0; j < 4; ++j)
+                        yinv4[i][j] = tmp[i][j];
+        }
     }
 
     double fs = 48000.0;
@@ -141,7 +206,13 @@ private:
     double gc16 = 0.0, gc17 = 0.0;          // companion conductances (set in prepare)
     double yi00 = 0.0, yi01 = 0.0, yi10 = 0.0, yi11 = 0.0; // precomputed Y^-1
     double ieqC16 = 0.0, ieqC17 = 0.0;      // capacitor history currents
+    // ---- coupled bridged-T + R24 + IC4_B mode (setCoupledSk) ----
+    bool coupled = false;
+    double r24 = 10.0e3, r25 = 22.0e3, c18 = 1.0e-9, c27 = 1.0e-9;
+    double gc18 = 0.0, gc27 = 0.0, ieqC18 = 0.0, ieqC27 = 0.0;
+    double yinv4[4][4] = {};
     RailClamp rail;
+    RailClamp railSk;                        // IC4_B output clamp (coupled mode only)
 
     RecoveryBridgedT(const RecoveryBridgedT&) = delete;
     RecoveryBridgedT& operator=(const RecoveryBridgedT&) = delete;

@@ -376,6 +376,12 @@ static void applyFitAssignment(FitParams& fit, const std::string& assignment)
         return;
     }
 
+    if (key == "btcoupledsk")
+    {
+        fit.btCoupledSk = parseBool("--fit btCoupledSk", value) ? 1 : 0;
+        return;
+    }
+
     if (key == "clipphysical")
     {
         // 0 = fitted sigmoid VTC, 1 = simple two-MOSFET model, 2 = extended (FitParams.h clipPhysical).

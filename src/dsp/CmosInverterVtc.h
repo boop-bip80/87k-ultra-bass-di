@@ -149,7 +149,7 @@ inline double tripPoint(Device d, double vcc, double r19) noexcept
 }
 
 // Immutable lookup table of y(w) = vout(Vm + w) - Vm over w in [wLo, wHi], C1 cubic Hermite
-// interpolation with central-difference node slopes. The grid is PIECEWISE UNIFORM: fine (0.25 mV)
+// interpolation with monotone (Fritsch-Butland) node slopes. The grid is PIECEWISE UNIFORM: fine (0.25 mV)
 // across the transition region |w| < 0.3 V and coarse (5 mV) in the saturated tails. The fine zone is
 // load-bearing: at the self-bias point the VTC has slope ~-150 and the p-channel leaves saturation
 // within ~3 mV of the trip point, so a uniform 3 mV grid smears that kink and under-reads the
@@ -242,14 +242,24 @@ inline std::shared_ptr<const Table> buildTable(Device d, double vcc, double r19,
         t->y[i] = solve(d, vin, vcc, r19).vout - t->vm;
         t->yMax = std::max(t->yMax, std::abs(t->y[i]));
     }
-    for (size_t i = 0; i < n; ++i)
+    // Fritsch-Butland monotone slopes: the data is monotone decreasing, and plain central differences let the
+    // Hermite cubic overshoot (slightly POSITIVE slope) at the p-channel's saturation kink. A positive slope
+    // would break the solver's uniqueness argument (dF/dw = -gIn + gFb*(vtc' - 1) must stay negative).
+    std::vector<double> sec(n - 1);
+    for (size_t i = 0; i + 1 < n; ++i)
+        sec[i] = (t->y[i + 1] - t->y[i]) / (t->x[i + 1] - t->x[i]);
+    t->m[0] = sec[0];
+    t->m[n - 1] = sec[n - 2];
+    for (size_t i = 1; i + 1 < n; ++i)
     {
-        if (i == 0)
-            t->m[i] = (t->y[1] - t->y[0]) / (t->x[1] - t->x[0]);
-        else if (i == n - 1)
-            t->m[i] = (t->y[i] - t->y[i - 1]) / (t->x[i] - t->x[i - 1]);
-        else
-            t->m[i] = (t->y[i + 1] - t->y[i - 1]) / (t->x[i + 1] - t->x[i - 1]);
+        const double s0 = sec[i - 1], s1 = sec[i];
+        if (s0 * s1 <= 0.0)
+        {
+            t->m[i] = 0.0;
+            continue;
+        }
+        const double h0 = t->x[i] - t->x[i - 1], h1 = t->x[i + 1] - t->x[i];
+        t->m[i] = 3.0 * (h0 + h1) / ((2.0 * h1 + h0) / s0 + (h1 + 2.0 * h0) / s1);
     }
     return t;
 }
