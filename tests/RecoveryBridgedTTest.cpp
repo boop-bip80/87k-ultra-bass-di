@@ -20,6 +20,7 @@
 
 #include "../src/dsp/RecoveryBridgedT.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -58,6 +59,87 @@ static double measureDb(double freq, double fs)
     }
     return (peak > 0.0) ? 20.0 * std::log10(peak / amp) : -300.0;
 }
+
+
+struct CoupledRecoveryOracle
+{
+    explicit CoupledRecoveryOracle(double sampleRate) : fs(sampleRate) {}
+    double fs, i16 = 0.0, i17 = 0.0, i18 = 0.0, i27 = 0.0;
+    static double clip(double z) noexcept
+    {
+        constexpr double pos = 2.7, neg = 2.9, h = 0.35;
+        if (z > pos - h)
+            return z >= pos + h ? pos : pos - (z - pos - h) * (z - pos - h) / (4.0 * h);
+        if (z < -(neg - h))
+            return z <= -(neg + h) ? -neg : -neg + (z + neg + h) * (z + neg + h) / (4.0 * h);
+        return z;
+    }
+
+    // Direct 4x4 Kirchhoff matrix, with C18 between N1 and DRIVEN output O.
+    // Partial-pivot Gaussian elimination is independent of production inverse
+    // and rank-one clamp correction.
+    void solve(const double rhs[4], double opampOut, double v[4]) const noexcept
+    {
+        const double g22 = 1.0 / 100e3, g23 = 1.0 / 33e3;
+        const double g24 = 1.0 / 10e3, g25 = 1.0 / 22e3;
+        const double k16 = 2.0 * fs * 680e-12, k17 = 2.0 * fs * 22e-9;
+        const double k18 = 2.0 * fs * 1e-9, k27 = 2.0 * fs * 1e-9;
+        double a[4][5] = {
+            {g22 + g23 + k17, -g23, 0.0, 0.0, rhs[0]},
+            {-g23, g23 + k16 + g24, -g24, 0.0, rhs[1]},
+            {0.0, -g24, g24 + g25 + k18, -g25, rhs[2] + k18 * opampOut},
+            {0.0, 0.0, -g25, g25 + k27, rhs[3]}
+        };
+        for (int k = 0; k < 4; ++k)
+        {
+            int pivot = k;
+            for (int row = k + 1; row < 4; ++row)
+                if (std::abs(a[row][k]) > std::abs(a[pivot][k])) pivot = row;
+            for (int col = 0; col < 5; ++col)
+                std::swap(a[pivot][col], a[k][col]);
+            const double inverse = 1.0 / a[k][k];
+            for (int col = k; col < 5; ++col) a[k][col] *= inverse;
+            for (int row = k + 1; row < 4; ++row)
+            {
+                const double factor = a[row][k];
+                for (int col = k; col < 5; ++col) a[row][col] -= factor * a[k][col];
+            }
+        }
+        for (int row = 3; row >= 0; --row)
+        {
+            v[row] = a[row][4];
+            for (int col = row + 1; col < 4; ++col)
+                v[row] -= a[row][col] * v[col];
+        }
+    }
+
+    double process(double input) noexcept
+    {
+        const double vin = clip(input);
+        const double k16 = 2.0 * fs * 680e-12, k17 = 2.0 * fs * 22e-9;
+        const double k18 = 2.0 * fs * 1e-9, k27 = 2.0 * fs * 1e-9;
+        const double rhs[4] = {vin / 100e3 + i17, k16 * vin - i16, i18, i27};
+        double lower[4], upper[4], v[4];
+        solve(rhs, -2.9, lower);
+        solve(rhs, +2.7, upper);
+        double lo = lower[3], hi = upper[3];
+        for (int iter = 0; iter < 60; ++iter)
+        {
+            const double guess = lo + 0.5 * (hi - lo);
+            solve(rhs, clip(guess), v);
+            if (v[3] > guess) lo = guess;
+            else hi = guess;
+        }
+        const double kp = lo + 0.5 * (hi - lo);
+        solve(rhs, clip(kp), v);
+        const double output = clip(v[3]);
+        i17 = 2.0 * k17 * v[0] - i17;
+        i16 = 2.0 * k16 * (vin - v[1]) - i16;
+        i18 = 2.0 * k18 * (v[2] - output) - i18;
+        i27 = 2.0 * k27 * v[3] - i27;
+        return output;
+    }
+};
 
 int main()
 {
@@ -146,6 +228,61 @@ int main()
                     gain, positive ? "+" : "-", (positive && unity) ? "PASS" : "FAIL");
         if (! (positive && unity))
             ++failures;
+    }
+
+
+    // ---- Test 5: actual IC4_B output feeds C18 when rail saturates ----------
+    // Reference is the independent direct 4x4 nonlinear KCL solve above.
+    std::printf("\n=== Coupled IC4_B rail feedback vs direct KCL ===\n");
+    for (double fs : {48000.0, 96000.0})
+    {
+        RecoveryBridgedT corrected, legacy;
+        for (auto* stage : {&corrected, &legacy})
+        {
+            stage->prepare(fs);
+            stage->setCoupledSk(true, 10.0e3, 22.0e3, 1.0e-9, 1.0e-9);
+            stage->setRailVoltages(2.9, 2.7);
+            stage->setRailClampEnabled(true);
+        }
+        corrected.setCoupledRailFeedback(true);
+        CoupledRecoveryOracle reference(fs);
+        double worst = 0.0, largestChange = 0.0;
+        for (int n = 0; n < 3500; ++n)
+        {
+            const double input = n < 2200 ? 30.0 : n < 2800 ? -30.0
+                : 14.0 * std::sin(0.045 * static_cast<double>(n));
+            const double output = corrected.process(input);
+            const double expected = reference.process(input);
+            const double original = legacy.process(input);
+            worst = std::max(worst, std::abs(output - expected));
+            largestChange = std::max(largestChange, std::abs(output - original));
+        }
+        const bool ok = worst < 1.0e-8 && largestChange > 1.0e-3;
+        std::printf("  fs %.0f: oracle worst %.3g V, legacy difference %.3g V %s\n",
+                    fs, worst, largestChange, ok ? "PASS" : "FAIL");
+        if (!ok) ++failures;
+    }
+    for (bool railsEnabled : {false, true})
+    {
+        RecoveryBridgedT corrected, legacy;
+        for (auto* s : {&corrected, &legacy})
+        {
+            s->prepare(48000.0);
+            s->setCoupledSk(true, 10.0e3, 22.0e3, 1.0e-9, 1.0e-9);
+            s->setRailVoltages(2.9, 2.7);
+            s->setRailClampEnabled(railsEnabled);
+        }
+        corrected.setCoupledRailFeedback(true);
+        bool identical = true;
+        for (int n = 0; n < 2048; ++n)
+        {
+            const double x = (railsEnabled ? 0.01 : 30.0) * std::sin(n * 0.035);
+            if (corrected.process(x) != legacy.process(x)) identical = false;
+        }
+        std::printf("  %s mode identical with original: %s\n",
+                    railsEnabled ? "unsaturated" : "clamp-off",
+                    identical ? "PASS" : "FAIL");
+        if (!identical) ++failures;
     }
 
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");

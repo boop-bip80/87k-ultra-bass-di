@@ -139,6 +139,9 @@ public:
     static constexpr double kC6 = 22.0e-9;
     static constexpr double kC7 = 100.0e-9;
     static constexpr double kC8 = 220.0e-12;
+    // Independent Black Mirror VII clone: Q2 gate coupling/bias network.
+    static constexpr double kC4 = 22.0e-9;
+    static constexpr double kQ2GateR = 500.0e3; // R9 || R10 (1M || 1M)
 
     // size_t (not int) so every array subscript below is already the right
     // signedness — std::array::operator[] takes size_type, and an int index
@@ -153,6 +156,9 @@ public:
     {
         // Trapezoidal companion conductances: gc = 2*C / T.
         twoOverT = 2.0 * sampleRate;
+        gc4 = kC4 * twoOverT;
+        c4damp = 1.0 / (1.0 + gc4 * kQ2GateR);
+        g4eff = gc4 * c4damp;
         for (size_t i = 0; i < 3; ++i)
             gc5[i] = c5[i] * twoOverT;  // per ATTACK position (pole B); all equal by default
         gc9 = c9 * twoOverT;        // c9/c6 are fittable (default to kC9/kC6 exactly)
@@ -355,7 +361,7 @@ public:
     // ---- Q2 ACTIVE LOAD (the bootstrapped J201 load), added 2026-11 -----------------------
     // Q2's gate sits on the R9||R10 bias node (~500k to AC ground) and C4 (22n) couples its source
     // — the stage's output node G — to that gate. Small-signal, Q2 therefore presents an
-    // ADMITTANCE   Y2(s) = gm2/(1 + s*tau) + gds2,   tau = (R9||R10)*C4 = 11 ms,
+    // ADMITTANCE   Y2(s) = gds2 + (gm2+s*C4)/(1+s*tau), tau = (R9||R10)*C4 = 11 ms,
     // i.e. a series R2 = 1/gm2 and L2 = tau/gm2 to AC ground (in parallel with gds2 = the `rq2`
     // term already in the matrix). That is ~1.4 kOhm at LF, rising to ~19 kOhm at 200 Hz, ~100 kOhm
     // at 1 kHz and only reaching ro at tens of kHz. The previous model replaced it with a single
@@ -363,6 +369,19 @@ public:
     // impedance — and so the stage's LF/mid gain — by 20-30 dB below ~100 Hz (ngspice of the drawn
     // schematic, analysis/spice_reference/compare_od.py). `l2 <= 0` disables the branch and leaves
     // the node isolated (bit-identical to the pre-change stage).
+    // Add the *passive* current through Q2's C4 and R9||R10 as a separate
+    // opt-in. The fitted mode and legacy custom-Q2 experiments stay identical
+    // until explicitly enabled; schematic() enables this clone-derived branch.
+    void setQ2GateCapEnabled(bool enabled) noexcept
+    {
+        if (q2GateCapEnabled == enabled)
+            return;
+        q2GateCapEnabled = enabled;
+        ieqC4 = 0.0;
+        if (prepared)
+            rebuild();
+    }
+
     void setActiveLoad(double r2Ohm, double l2Henry) noexcept
     {
         const double r = (l2Henry > 0.0 && r2Ohm > 0.0) ? r2Ohm : 0.0;
@@ -372,6 +391,7 @@ public:
         qR2 = r;
         qL2 = l;
         ihL = 0.0;
+        ieqC4 = 0.0;
         if (prepared)
         {
             gL = (qL2 > 0.0) ? 1.0 / (qL2 * twoOverT) : 0.0;
@@ -383,6 +403,7 @@ public:
     {
         ieqC5 = ieqC9 = ieqC6 = ieqC7 = ieqC8 = ieqCp = 0.0;
         ihL = 0.0;
+        ieqC4 = 0.0;
     }
 
     void setAttack(Attack a) noexcept
@@ -419,6 +440,8 @@ public:
         const double ieqC5b = ieqC5 * c5damp[pos];
         std::array<double, N> b {};
         b[G] = iIn + ieqC5b;         // Norton drive; C5+Rd (a=G,b=L1)
+        if (q2GateCapEnabled)
+            b[G] += ieqC4 * c4damp; // C4 in series with R9||R10, to AC ground
         b[H] = ieqCp;                // Cp (a=H,b=GND)
         b[M] = -ieqC6;               // C6 (a=L2,b=M)
         b[P] = ieqC7;                // C7 (a=P,b=Q)
@@ -460,6 +483,12 @@ public:
         ieqC6 = 2.0 * gc6 * (v[L2] - v[M]) - ieqC6;
         ieqC7 = 2.0 * gc7 * (v[P] - v[Q]) - ieqC7;
         ieqCp = 2.0 * gcp * (v[H]) - ieqCp;
+        if (q2GateCapEnabled)
+        {
+            const double i4 = g4eff * v[G] - c4damp * ieqC4;
+            const double vc4 = v[G] - kQ2GateR * i4;
+            ieqC4 = 2.0 * gc4 * vc4 - ieqC4;
+        }
         ihL += 2.0 * gL * v[J];   // trapezoidal inductor: ih_new = ih + 2*gL*v   (gL = 0 => stays 0)
         if (attack == Attack::Boost)
             ieqC8 = 2.0 * gc8 * (v[M] - v[P]) - ieqC8;
@@ -525,6 +554,8 @@ private:
         const double gro = 1.0 / srcZ[0], gRq2 = 1.0 / srcZ[1], gRp = 1.0 / srcZ[2];
         Y[G][G] += gro; Y[G][H] -= gro; Y[H][G] -= gro; Y[H][H] += gro; // ro (G-H)
         Y[G][G] += gRq2;                                  // Rq2 (G-GND)
+        if (q2GateCapEnabled)
+            Y[G][G] += g4eff; // Q2 bootstrap C4 -> gate bias R9||R10 -> AC ground
         Y[H][H] += gRp;                                   // Rp  (H-GND)
         Y[H][H] += gcp;                                   // Cp  (H-GND)
         // ---- Q2 active load: G --R2-- J --L-- GND (J isolated with 1 S to GND when disabled) ----
@@ -636,6 +667,8 @@ private:
                        // session-62 two-pole proposal screens with (see setC8)
     // Q2 active-load branch (R2 + L2 to ground), inductor companion conductance and history.
     double qR2 = 0.0, qL2 = 0.0, gL = 0.0, ihL = 0.0;
+    bool q2GateCapEnabled = false;
+    double gc4 = 0.0, c4damp = 0.0, g4eff = 0.0, ieqC4 = 0.0;
     // Capacitor history (equivalent-source) currents.
     double ieqC5 = 0.0, ieqC9 = 0.0, ieqC6 = 0.0, ieqC7 = 0.0, ieqC8 = 0.0, ieqCp = 0.0;
     // One precomputed nodal-matrix inverse per ATTACK position (Boost/Flat/Cut).

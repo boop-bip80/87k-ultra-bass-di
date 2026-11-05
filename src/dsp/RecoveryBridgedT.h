@@ -1,6 +1,8 @@
 #pragma once
 
 #include "MnaSolve.h"
+#include <algorithm>
+#include <cmath>
 #include "RailClamp.h"
 
 // =============================================================================
@@ -113,6 +115,8 @@ public:
         reset();
     }
     bool coupledSk() const noexcept { return coupled; }
+    // Opt-in: solve IC4_B output rail and C18 feedback in one circuit equation.
+    void setCoupledRailFeedback(bool enabled) noexcept { coupledRailFeedback = enabled; }
 
     // Rail-clamp passthroughs (calibration §6) — applied to the BUFFER output.
     void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); railSk.setEnabled(e); }
@@ -132,6 +136,48 @@ public:
             const double rhsC[4] = { vin / r22 + ieqC17, gc16 * vin - ieqC16, ieqC18, ieqC27 };
             double v[4];
             mna::matvec<4>(yinv4, rhsC, v);
+
+            if (coupledRailFeedback && railSk.isEnabled() && std::isfinite(v[3])
+                && railSk.process(v[3]) != v[3])
+            {
+                // C18 spans N1 to the actual driven IC4_B output O=rail(Kp),
+                // whereas the old MNA treated the output as ideal Kp.
+                // The nonlinearity is a rank-one KCL correction to the
+                // precomputed 4x4 inverse: (1+h)*Kp-h*rail(Kp)=Kp_linear.
+                const double k0 = v[3];
+                double kp = k0;
+                if (railSkQ <= 0.2)
+                {
+                    for (int iter = 0; iter < 16; ++iter)
+                        kp = railSkInv * (k0 + railSkH * railSk.process(kp));
+                }
+                else
+                {
+                    const double noFeedback = k0 * railSkInv;
+                    double lo = std::min(noFeedback, k0);
+                    double hi = std::max(noFeedback, k0);
+                    for (int iter = 0; iter < 64; ++iter)
+                    {
+                        const double mid = lo + 0.5 * (hi - lo);
+                        if (mid - railSkInv * (k0 + railSkH * railSk.process(mid)) < 0.0)
+                            lo = mid;
+                        else
+                            hi = mid;
+                    }
+                    kp = lo + 0.5 * (hi - lo);
+                }
+                const double output = railSk.process(kp);
+                const double delta = gc18 * (output - kp);
+                for (int i = 0; i < 4; ++i)
+                    v[i] += yinv4[i][2] * delta;
+                v[3] = kp; // IC4_B's non-inverting input for C27 history
+                ieqC17 = 2.0 * gc17 * v[0] - ieqC17;
+                ieqC16 = 2.0 * gc16 * (vin - v[1]) - ieqC16;
+                ieqC18 = 2.0 * gc18 * (v[2] - output) - ieqC18;
+                ieqC27 = 2.0 * gc27 * kp - ieqC27;
+                return output;
+            }
+
             ieqC17 = 2.0 * gc17 * v[0] - ieqC17;              // Nmid - GND
             ieqC16 = 2.0 * gc16 * (vin - v[1]) - ieqC16;      // Vin - Nout
             ieqC18 = 2.0 * gc18 * (v[2] - v[3]) - ieqC18;     // N1 - Kp (= IC4_B output)
@@ -194,9 +240,14 @@ private:
             Y[3][2] = -g25; Y[3][3] = g25 + gc27;
             double tmp[4][4];
             if (mna::invert<4>(Y, tmp))
+            {
                 for (int i = 0; i < 4; ++i)
                     for (int j = 0; j < 4; ++j)
                         yinv4[i][j] = tmp[i][j];
+                railSkH = gc18 * yinv4[3][2];
+                railSkInv = 1.0 / (1.0 + railSkH);
+                railSkQ = railSkH * railSkInv;
+            }
         }
     }
 
@@ -213,6 +264,8 @@ private:
     double yinv4[4][4] = {};
     RailClamp rail;
     RailClamp railSk;                        // IC4_B output clamp (coupled mode only)
+    bool coupledRailFeedback = false;
+    double railSkH = 0.0, railSkInv = 1.0, railSkQ = 0.0;
 
     RecoveryBridgedT(const RecoveryBridgedT&) = delete;
     RecoveryBridgedT& operator=(const RecoveryBridgedT&) = delete;

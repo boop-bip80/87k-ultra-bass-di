@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <complex>
 #include <vector>
 
 static constexpr double PI = 3.14159265358979323846;
@@ -460,6 +461,81 @@ int main()
             if (! live)
                 ++failures;
         }
+    }
+
+
+    // ---- Test 11: independent clone-Q2 C4 admittance oracle -----------------
+    // These complex results were independently assembled from an 8-node AC
+    // nodal solve with s = j*2fs*tan(pi*f/fs), not from this stage's Y^-1.
+    std::printf("\n=== Q2 bootstrap C4 + R9||R10 passive current ===\n");
+    {
+        constexpr double q1gm = 0.695e-3, ro = 1.0 / 2.30e-7;
+        constexpr double rq2 = 1.0 / 2.39e-7;
+        constexpr double rp = ro * q1gm * 3300.0;
+        constexpr double cp = 3300.0 * 220.0e-9 / rp;
+        struct AcRef { double hz, db, phase; };
+        const AcRef expected[] = {
+            { 100.0, 63.2334789518, 20.86590749 },
+            { 1000.0, 65.6478727026, 19.53183639 },
+            { 10000.0, 66.2853990265, 1.64677450 }
+        };
+        for (const auto& ref : expected)
+        {
+            TrebleAttack stage;
+            stage.prepare(48000.0);
+            stage.setSourceZ(ro, rq2, rp, cp);
+            stage.setActiveLoad(1.0 / 0.707e-3, 0.011 / 0.707e-3);
+            stage.setQ2GateCapEnabled(true);
+            stage.setAttack(TrebleAttack::Attack::Flat);
+            std::complex<double> inPhasor(0.0, 0.0), outPhasor(0.0, 0.0);
+            for (int n = 0; n < 96000; ++n)
+            {
+                const double angle = 2.0 * PI * ref.hz * n / 48000.0;
+                const double input = 1.0e-6 * std::sin(angle);
+                const double output = stage.process(input);
+                if (n >= 48000)
+                {
+                    const std::complex<double> demod(std::cos(angle), -std::sin(angle));
+                    inPhasor += input * demod;
+                    outPhasor += output * demod;
+                }
+            }
+            const auto gain = outPhasor / inPhasor;
+            const double db = 20.0 * std::log10(std::abs(gain));
+            const double phase = std::arg(gain) * 180.0 / PI;
+            const bool ok = std::abs(db - ref.db) < 0.025
+                            && std::abs(phase - ref.phase) < 0.20;
+            std::printf("  %.0f Hz: %.6f dB %.5f deg (oracle %.6f dB %.5f deg) %s\n",
+                        ref.hz, db, phase, ref.db, ref.phase, ok ? "PASS" : "FAIL");
+            if (!ok) ++failures;
+        }
+
+        // An explicit OFF gate cannot affect the old fitted/custom-Q2 model.
+        TrebleAttack legacy, gatedOff, gatedOn;
+        for (auto* stage : {&legacy, &gatedOff, &gatedOn})
+        {
+            stage->prepare(48000.0);
+            stage->setSourceZ(ro, rq2, rp, cp);
+            stage->setActiveLoad(1.0 / 0.707e-3, 0.011 / 0.707e-3);
+        }
+        gatedOff.setQ2GateCapEnabled(false);
+        gatedOn.setQ2GateCapEnabled(true);
+        bool identical = true;
+        double largestDifference = 0.0;
+        for (int n = 0; n < 32768; ++n)
+        {
+            const double input = 1.0e-6 * std::sin(2.0 * PI * 1000.0 * n / 48000.0);
+            const double a = legacy.process(input);
+            const double b = gatedOff.process(input);
+            const double c = gatedOn.process(input);
+            identical &= std::memcmp(&a, &b, sizeof(double)) == 0;
+            largestDifference = std::max(largestDifference, std::abs(a - c));
+        }
+        const bool optInLive = largestDifference > 1.0e-9;
+        std::printf("  disabled bit identity %s; enabled differs %.3g V %s\n",
+                    identical ? "PASS" : "FAIL", largestDifference,
+                    optInLive ? "PASS" : "FAIL");
+        if (!(identical && optInLive)) ++failures;
     }
 
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");

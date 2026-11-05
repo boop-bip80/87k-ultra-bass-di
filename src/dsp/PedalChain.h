@@ -352,6 +352,7 @@ public:
         }
         treble.setActiveLoad(f.jfetQ2Gm > 0.0 ? 1.0 / f.jfetQ2Gm : 0.0,
                              f.jfetQ2Gm > 0.0 ? f.jfetQ2Tau / f.jfetQ2Gm : 0.0);
+        treble.setQ2GateCapEnabled(f.jfetQ2GateCap != 0);
         treble.setNotchDamp(f.trebleLadderDampR); // session-19: shallow the 322 Hz notch
         // ---- The two-pole ATTACK topology (session 62's proposal; defaults = the
         // drawn network exactly). ⚠ ORDER MATTERS: setNotchDamp() above writes all
@@ -417,6 +418,7 @@ public:
                            f.odTiltMaxCutDb);
         masterOut.setTaper(f.masterTaperBreak, f.masterTaperFrac,
                            f.masterTaperBreak2, f.masterTaperFrac2);
+        masterOut.setReceiverLoadOhms(f.receiverLoadOhms);
 
         c21.r = f.c21R;
         // C21: inside the Baxandall MNA when c21Cap > 0 (the default), so it works against the
@@ -425,6 +427,7 @@ public:
         recovery.setComponents(f.btR22, f.btR23, f.btC16, f.btC17);
         recovery.setCoupledSk(f.btCoupledSk != 0, SallenKeyLPF::kIC4B.r1, SallenKeyLPF::kIC4B.r2,
                               SallenKeyLPF::kIC4B.c1, SallenKeyLPF::kIC4B.c2);
+        recovery.setCoupledRailFeedback(f.skRailFeedbackCoupled != 0);
 
         // RailClamp on EVERY op-amp output (calibration §6 / GATE-4 item). The
         // J201 and CD4049 are deliberately absent: neither is an op-amp, and
@@ -443,6 +446,8 @@ public:
         recovery.setRailClampEnabled(f.railEnabled);
         skB.setRailClampEnabled(f.railEnabled);
         skA.setRailClampEnabled(f.railEnabled);
+        skB.setCoupledRailFeedback(f.skRailFeedbackCoupled != 0);
+        skA.setCoupledRailFeedback(f.skRailFeedbackCoupled != 0);
         eqPreGain.setRailClampEnabled(f.railEnabled);
         baxandall.setRailClampEnabled(f.railEnabled);
         loMid.setRailClampEnabled(f.railEnabled);

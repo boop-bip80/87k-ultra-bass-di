@@ -1,6 +1,8 @@
 #pragma once
 
 #include "RailClamp.h"
+#include <algorithm>
+#include <cmath>
 
 // =============================================================================
 // Stage 6 — Sallen-Key low-pass ×2 (IC4_B ≈ 10.7 kHz, IC4_A ≈ 3.3 kHz) —
@@ -73,6 +75,18 @@ public:
         yi10 = -c / det;
         yi11 = a / det;
 
+        // For the optional rail-aware follower feedback solve, C1 is connected
+        // to the ACTUAL op-amp output (which may be clamped), not ideal node Y.
+        // Eliminating X gives A*Y - gc1*rail(Y) = rhs0 + (a/g2)*rhs1.
+        const double g2 = 1.0 / val.r2;
+        coupledG2 = g2;
+        coupledD = d;
+        coupledAOverG2 = a / g2;
+        coupledLinearDen = 1.0 / val.r1 + a * gc2 / g2;
+        const double A = coupledLinearDen + gc1;
+        coupledInvA = 1.0 / A;
+        coupledQ = gc1 * coupledInvA;
+
         reset();
     }
 
@@ -81,6 +95,10 @@ public:
     // Rail-clamp passthroughs (calibration §6) — applied to Vout (op-amp output).
     void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); }
     void setRailVoltages(double vNeg, double vPos) noexcept { rail.setRailVoltages(vNeg, vPos); }
+
+    // Research mode: solve C1's feedback against actual clamped output voltage.
+    // Default OFF to preserve the legacy fitted signal path sample-for-sample.
+    void setCoupledRailFeedback(bool enabled) noexcept { coupledRailFeedback = enabled; }
 
     // Process one sample (real volts). Vout = V(Y).
     inline double process(double x) noexcept
@@ -93,6 +111,46 @@ public:
 
         const double vx = yi00 * rhs0 + yi01 * rhs1;
         const double vy = yi10 * rhs0 + yi11 * rhs1;
+
+        if (coupledRailFeedback && rail.isEnabled() && std::isfinite(vy)
+            && rail.process(vy) != vy)
+        {
+            const double rhs = rhs0 + coupledAOverG2 * rhs1;
+            double correctedY = vy;
+
+            if (coupledQ <= 0.2)
+            {
+                // Current supported IC4_A/B values have contraction ratio <0.15.
+                for (int k = 0; k < 16; ++k)
+                    correctedY = coupledInvA * (rhs + gc1 * rail.process(correctedY));
+            }
+            else
+            {
+                // Generic configure(Values) can make the contraction slow.
+                // Monotone F(Y)=A*Y-gc1*rail(Y)-rhs has its unique root
+                // between the zero-feedback and ideal-follower solutions.
+                const double noFeedback = rhs * coupledInvA;
+                const double idealFollower = rhs / coupledLinearDen;
+                double lo = std::min(noFeedback, idealFollower);
+                double hi = std::max(noFeedback, idealFollower);
+                for (int k = 0; k < 64; ++k)
+                {
+                    const double mid = lo + 0.5 * (hi - lo);
+                    if (mid - coupledInvA * (rhs + gc1 * rail.process(mid)) < 0.0)
+                        lo = mid;
+                    else
+                        hi = mid;
+                }
+                correctedY = lo + 0.5 * (hi - lo);
+            }
+
+            const double drivenOutput = rail.process(correctedY);
+            const double correctedX = (coupledD * correctedY - rhs1) / coupledG2;
+            // Trapezoidal capacitor histories now use the physical C1 plate.
+            ieqC1 = 2.0 * gc1 * (correctedX - drivenOutput) - ieqC1;
+            ieqC2 = 2.0 * gc2 * correctedY - ieqC2;
+            return drivenOutput;
+        }
 
         // Capacitor state update: Ieq_new = 2*gc*v_ab − Ieq_old.
         ieqC1 = 2.0 * gc1 * (vx - vy) - ieqC1; // v_ab = X − O(=Y)
@@ -107,6 +165,9 @@ private:
     double yi00 = 0.0, yi01 = 0.0, yi10 = 0.0, yi11 = 0.0; // precomputed Y^-1
     double ieqC1 = 0.0, ieqC2 = 0.0;        // capacitor history currents
     RailClamp rail;
+    bool coupledRailFeedback = false;
+    double coupledG2 = 0.0, coupledD = 0.0, coupledAOverG2 = 0.0;
+    double coupledLinearDen = 0.0, coupledInvA = 0.0, coupledQ = 0.0;
 
     SallenKeyLPF(const SallenKeyLPF&) = delete;
     SallenKeyLPF& operator=(const SallenKeyLPF&) = delete;

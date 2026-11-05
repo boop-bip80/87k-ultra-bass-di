@@ -15,6 +15,7 @@
 
 #include "../src/dsp/SallenKeyLPF.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -178,6 +179,100 @@ int main()
         std::printf("  clamp-disabled stays linear (%.6fx): %s\n", y / 1e-3, linOk ? "PASS" : "FAIL");
         if (! linOk)
             ++failures;
+    }
+
+
+    // ---- Test 6: rail feedback must use the actual C1 output plate ---------
+    // This oracle independently solves Kirchhoff's equations with bisection,
+    // instead of the production fixed-point method.
+    std::printf("\n=== Implicit KCL: rail-loaded Sallen-Key capacitor feedback ===\n");
+    struct CoupledOracle
+    {
+        SallenKeyLPF::Values values;
+        double i1 = 0.0, i2 = 0.0;
+        static double clip(double z) noexcept
+        {
+            constexpr double pos = 2.7, neg = 2.9, h = 0.35;
+            if (z > pos - h)
+                return z >= pos + h ? pos : pos - (z - pos - h) * (z - pos - h) / (4.0 * h);
+            if (z < -(neg - h))
+                return z <= -(neg + h) ? -neg : -neg + (z + neg + h) * (z + neg + h) / (4.0 * h);
+            return z;
+        }
+        double step(double vin, double fs) noexcept
+        {
+            const double g1 = 1.0 / values.r1, g2 = 1.0 / values.r2;
+            const double k1 = 2.0 * fs * values.c1, k2 = 2.0 * fs * values.c2;
+            const double a = g1 + g2 + k1, d = g2 + k2;
+            const double A = g1 + k1 + a * k2 / g2;
+            const double rhs = g1 * vin + i1 + (a / g2) * i2;
+            const double noFeedback = rhs / A;
+            const double idealFollower = rhs / (A - k1);
+            double lo = std::min(noFeedback, idealFollower);
+            double hi = std::max(noFeedback, idealFollower);
+            for (int j = 0; j < 64; ++j)
+            {
+                const double mid = lo + 0.5 * (hi - lo);
+                if (A * mid - k1 * clip(mid) < rhs) lo = mid;
+                else hi = mid;
+            }
+            const double y = lo + 0.5 * (hi - lo);
+            const double output = clip(y);
+            const double x = (d * y - i2) / g2;
+            i1 = 2.0 * k1 * (x - output) - i1;
+            i2 = 2.0 * k2 * y - i2;
+            return output;
+        }
+    };
+    auto testCoupled = [&](SallenKeyLPF::Values values, double fs)
+    {
+        SallenKeyLPF stage;
+        stage.configure(values);
+        stage.prepare(fs);
+        stage.setRailVoltages(2.9, 2.7);
+        stage.setRailClampEnabled(true);
+        stage.setCoupledRailFeedback(true);
+        CoupledOracle oracle { values };
+        double worst = 0.0;
+        for (int n = 0; n < 256; ++n)
+        {
+            const double stimulus = n == 0 ? 18.0 : n == 80 ? -30.0
+                : n == 160 ? 30.0 : 8.0 * std::sin(0.07 * static_cast<double>(n));
+            const double in = stimulus * (values.r1 > 1.0e5 ? 1000.0 : 1.0);
+            worst = std::max(worst, std::abs(stage.process(in) - oracle.step(in, fs)));
+        }
+        const bool ok = worst < (values.r1 > 1.0e5 ? 1.0e-7 : 1.0e-9);
+        std::printf("  IC4 R1=%.0f fs=%.0f: max oracle residual %.3g V %s\n",
+                    values.r1, fs, worst, ok ? "PASS" : "FAIL");
+        if (!ok) ++failures;
+    };
+    for (double fs : {44100.0, 48000.0, 96000.0, 192000.0})
+    {
+        testCoupled(SallenKeyLPF::kIC4B, fs);
+        testCoupled(SallenKeyLPF::kIC4A, fs);
+    }
+    // Unusual custom component ratios exercise the monotone bisection fallback.
+    testCoupled({1.0e6, 1.0e3, 1.0e-6, 1.0e-10}, 48000.0);
+    for (bool railsEnabled : {false, true})
+    {
+        SallenKeyLPF corrected, legacy;
+        for (auto* s : {&corrected, &legacy})
+        {
+            s->configure(SallenKeyLPF::kIC4B);
+            s->prepare(48000.0);
+            s->setRailVoltages(2.9, 2.7);
+            s->setRailClampEnabled(railsEnabled);
+        }
+        corrected.setCoupledRailFeedback(true);
+        bool identical = true;
+        for (int n = 0; n < 2048; ++n)
+        {
+            const double input = (railsEnabled ? 0.01 : 30.0) * std::sin(0.11 * n);
+            if (corrected.process(input) != legacy.process(input)) identical = false;
+        }
+        std::printf("  %s legacy bit identity: %s\n",
+                    railsEnabled ? "unsaturated" : "clamp-off", identical ? "PASS" : "FAIL");
+        if (!identical) ++failures;
     }
 
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");

@@ -243,6 +243,7 @@ static const FitField kFitFields[] = {
     {"masterTaperFrac", &FitParams::masterTaperFrac},
     {"masterTaperBreak2", &FitParams::masterTaperBreak2},
     {"masterTaperFrac2", &FitParams::masterTaperFrac2},
+    {"receiverLoadOhms", &FitParams::receiverLoadOhms},
     // OD-path makeup, the OD:CLEAN ratio (s172, item 10 / A3). 0 dB = pre-s172 behaviour.
     {"odMakeupDb", &FitParams::odMakeupDb},
     {"odMakeupLowHz", &FitParams::odMakeupLowHz},
@@ -379,6 +380,16 @@ static void applyFitAssignment(FitParams& fit, const std::string& assignment)
     if (key == "btcoupledsk")
     {
         fit.btCoupledSk = parseBool("--fit btCoupledSk", value) ? 1 : 0;
+        return;
+    }
+    if (key == "skrailfeedbackcoupled")
+    {
+        fit.skRailFeedbackCoupled = parseBool("--fit skRailFeedbackCoupled", value) ? 1 : 0;
+        return;
+    }
+    if (key == "jfetq2gatecap")
+    {
+        fit.jfetQ2GateCap = parseBool("--fit jfetQ2GateCap", value) ? 1 : 0;
         return;
     }
 

@@ -168,6 +168,23 @@ public:
     void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); }
     void setRailVoltages(double vNeg, double vPos) noexcept { rail.setRailVoltages(vNeg, vPos); }
 
+    // Optional finite receiver impedance at the 1/4-inch jack. Infinity restores
+    // the legacy open-load model; the actual connected equipment must be measured.
+    void setReceiverLoadOhms(double ohms) noexcept
+    {
+        if (std::isinf(ohms) && ohms > 0.0)
+        {
+            receiverLegConductance = 0.0;
+            receiverDivider = 1.0;
+            return;
+        }
+        if (!std::isfinite(ohms) || ohms < 0.0)
+            return; // invalid inputs cannot silently change a valid configuration
+        const double legResistance = kR47 + ohms;
+        receiverLegConductance = 1.0 / legResistance;
+        receiverDivider = ohms / legResistance;
+    }
+
     // Process one sample: Vin = IC6_A (EQ) output, VD-referenced volts; out = OUT.
     inline double process(double vin) noexcept
     {
@@ -179,12 +196,13 @@ public:
         // ---- Unloaded resistive wiper tap → IC6_B unity buffer (rail-clamped) ----
         const double vbuf = rail.process(ntop * divRatio);
 
-        // ---- Output HPF node Nout: C37 (a=Vbuf src, b=Nout) + R46 to GND ----
-        // (gc37 + 1/R46)·Nout = gc37·Vbuf - ieqC37 ; OUT = Nout (R47 into open load)
-        const double nout = (gc37 * vbuf - ieqC37) / (gc37 + 1.0 / kR46);
-        ieqC37 = 2.0 * gc37 * (vbuf - nout) - ieqC37; // v_ab = Vbuf - Nout
+        // ---- Output HPF: R46 in parallel with (R47 + receiving Rload) ----
+        // The default is an open load, yielding the exact legacy denominator.
+        const double nout = (gc37 * vbuf - ieqC37)
+                            / (gc37 + 1.0 / kR46 + receiverLegConductance);
+        ieqC37 = 2.0 * gc37 * (vbuf - nout) - ieqC37; // C37 sees internal Nout
 
-        return nout;
+        return nout * receiverDivider; // jack voltage AFTER series R47
     }
 
 private:
@@ -198,6 +216,8 @@ private:
     double masterTaperFrac2 = kMasterTaperFrac2;
     double knob = 1.0;
     RailClamp rail;
+    double receiverLegConductance = 0.0; // unloaded default
+    double receiverDivider = 1.0;
 
     MasterOut(const MasterOut&) = delete;
     MasterOut& operator=(const MasterOut&) = delete;

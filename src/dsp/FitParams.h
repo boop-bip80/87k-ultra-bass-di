@@ -1,4 +1,5 @@
 #pragma once
+#include <limits>
 
 // =============================================================================
 // FitParams — every Phase-7 CAPTURE-FIT constant, in one place
@@ -262,6 +263,8 @@ struct FitParams
     // of the typical J201: Id = 0.12 mA, gm = 0.707 mS).
     double jfetQ2Gm = 0.0;
     double jfetQ2Tau = 11.0e-3;
+    // Passive series-C4/500k gate shunt, independently opt-in for clone-schematic tests.
+    int jfetQ2GateCap = 0;
     double jfetGm = 0.10e-3;   // S   session-4 anchor / session-17 HELD (was nominal 0.69e-3; gm*R6 = 0.33)
     double jfetRo = 200.0e3;   // ohm  Q1 drain output resistance (1/gos)
     double jfetRq2 = 1.0e6;    // ohm  Q2 C4-bootstrapped active-load impedance
@@ -561,7 +564,11 @@ struct FitParams
     double masterTaperBreak = 0.331781;   // rotation at which the wiper reaches masterTaperFrac
     double masterTaperFrac = 0.056905;    // fraction of full resistance at that rotation
     double masterTaperBreak2 = 0.659183;  // rotation at which the wiper reaches masterTaperFrac2
-    double masterTaperFrac2 = 0.177468;   // fraction of full resistance at the second break
+    double masterTaperFrac2 = 0.177468;
+
+    // Optional quarter-inch receiving resistance for an independently specified
+    // measurement fixture. Default open-circuit preserves the calibrated model.
+    double receiverLoadOhms = std::numeric_limits<double>::infinity();   // fraction of full resistance at the second break
 
     // ---- C21 (100n) inter-stage coupling into the tone stack ----------------
     // The 100n cap is schematic-verified; the resistance it works against is the
@@ -962,6 +969,9 @@ struct FitParams
     // setCoupledSk). The shipped calibration (0) treats the bridged-T as unloaded and the SK as ideal-source
     // driven, which ngspice of the drawn schematic shows is 1-6 dB too loud between 1 and 8 kHz.
     int btCoupledSk = 0;
+    // Rail-feedback capacitor update for standalone IC4 followers and
+    // the embedded IC4_B in coupled RecoveryBridgedT; schematic() enables both.
+    int skRailFeedbackCoupled = 0;
     double btR22 = 100.0e3;
     double btR23 = 33.0e3;
     double btC16 = 680.0e-12;
@@ -1601,6 +1611,7 @@ struct FitParams
         FitParams f;
         f.odEmpirical = 0;
         f.btCoupledSk = 1;  // bridged-T + R24 + IC4_B solved as one network (RecoveryBridgedT.h)
+        f.skRailFeedbackCoupled = 1; // IC4_A and embedded IC4_B feedback use actual rail output
         f.clipPhysical = 2; // the paper's extended two-MOSFET inverter + R19 sag (see CmosInverterVtc.h)
         f.odTiltEnabled = 0;
         f.blendEndStop = 0.0;
@@ -1615,6 +1626,7 @@ struct FitParams
         f.jfetRq2 = 1.0 / 2.39e-7;
         f.jfetQ2Gm = 0.707e-3;
         f.jfetQ2Tau = 11.0e-3;
+        f.jfetQ2GateCap = 1;
         // treble / ATTACK ladder as drawn
         f.trebleR7 = 200.0e3;
         f.attackTapRa = 470.0e3;

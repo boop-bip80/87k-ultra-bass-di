@@ -23,6 +23,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <limits>
 
 static constexpr double PI = 3.14159265358979323846;
 
@@ -209,6 +210,93 @@ int main()
                     m, firstGain, divRatio, y, pass ? "PASS" : "FAIL");
         if (! pass)
             ++failures;
+    }
+
+
+    // ---- Test 4: receiver impedance changes R46/C37 high-pass, not just gain --
+    // Independent complex-Laplace oracle includes BOTH C36 and C37 stages.
+    std::printf("\n=== Output-jack finite receiver load vs complex oracle ===\n");
+    const auto loadedOracle = [](double load, double freq)
+    {
+        const std::complex<double> s(0.0, 2.0 * PI * freq);
+        const double rleg = MasterOut::kR47 + load;
+        const bool open = std::isinf(load);
+        const double req = open ? MasterOut::kR46
+            : 1.0 / (1.0 / MasterOut::kR46 + 1.0 / rleg);
+        const double divider = open ? 1.0 : load / rleg;
+        const auto hpIn = s * MasterOut::kC36 * MasterOut::kRp
+            / (1.0 + s * MasterOut::kC36 * MasterOut::kRp);
+        const auto hpOut = s * MasterOut::kC37 * req
+            / (1.0 + s * MasterOut::kC37 * req);
+        return 20.0 * std::log10(std::abs(hpIn * hpOut) * divider);
+    };
+    const auto loadedMeasured = [](double load, double freq, double fs)
+    {
+        MasterOut stage;
+        stage.prepare(fs);
+        stage.setMaster(1.0);
+        stage.setReceiverLoadOhms(load);
+        const double period = fs / freq;
+        const int settle = static_cast<int>(std::max(2.0 * fs, 12.0 * period));
+        const int measure = static_cast<int>(std::ceil(2.0 * period)) + 1;
+        double peak = 0.0;
+        for (int n = 0; n < settle + measure; ++n)
+        {
+            const double input = 0.001 * std::sin(2.0 * PI * freq * n / fs);
+            const double output = stage.process(input);
+            if (n >= settle) peak = std::max(peak, std::abs(output));
+        }
+        return 20.0 * std::log10(peak / 0.001);
+    };
+    for (double fs : {48000.0, 96000.0})
+        for (double load : {1.0e4, 1.0e5, 1.0e6,
+                            std::numeric_limits<double>::infinity()})
+        {
+            double worst = 0.0;
+            for (double freq : {20.0, 100.0, 1000.0, 10000.0, 20000.0})
+                worst = std::max(worst,
+                                 std::abs(loadedMeasured(load, freq, fs) - loadedOracle(load, freq)));
+            const bool ok = worst < 0.05;
+            std::printf("  fs %.0f receiver %.0f ohm max err %.5f dB %s\n",
+                        fs, load, worst, ok ? "PASS" : "FAIL");
+            if (!ok) ++failures;
+        }
+    {
+        MasterOut implicitOpen, explicitOpen, shorted;
+        implicitOpen.prepare(48000.0);
+        explicitOpen.prepare(48000.0);
+        shorted.prepare(48000.0);
+        explicitOpen.setReceiverLoadOhms(std::numeric_limits<double>::infinity());
+        shorted.setReceiverLoadOhms(0.0);
+        bool identical = true, shortIsZero = true;
+        for (int n = 0; n < 4000; ++n)
+        {
+            const double x = 1.5 * std::sin(0.013 * n);
+            identical &= implicitOpen.process(x) == explicitOpen.process(x);
+            shortIsZero &= shorted.process(x) == 0.0;
+        }
+        std::printf("  default/open bit identity %s; shorted jack %s\n",
+                    identical ? "PASS" : "FAIL", shortIsZero ? "PASS" : "FAIL");
+        if (!(identical && shortIsZero)) ++failures;
+    }
+    {
+        MasterOut stage, baseline;
+        stage.prepare(48000.0);
+        baseline.prepare(48000.0);
+        stage.setReceiverLoadOhms(1.0e4);
+        stage.setReceiverLoadOhms(-100.0);
+        stage.setReceiverLoadOhms(std::numeric_limits<double>::quiet_NaN());
+        baseline.setReceiverLoadOhms(1.0e4);
+        bool unchanged = true;
+        for (int n = 0; n < 1000; ++n)
+            unchanged &= stage.process(std::sin(0.021*n)) == baseline.process(std::sin(0.021*n));
+        stage.setReceiverLoadOhms(std::numeric_limits<double>::infinity());
+        bool finite = true;
+        for (int n = 0; n < 1000; ++n)
+            finite &= std::isfinite(stage.process(std::sin(0.021*n)));
+        std::printf("  invalid load leaves config intact %s; live switch finite %s\n",
+                    unchanged ? "PASS" : "FAIL", finite ? "PASS" : "FAIL");
+        if (!(unchanged && finite)) ++failures;
     }
 
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");
