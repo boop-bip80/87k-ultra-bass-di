@@ -115,6 +115,19 @@ public:
     void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); }
     void setRailVoltages(double vNeg, double vPos) noexcept { rail.setRailVoltages(vNeg, vPos); }
 
+    // Optional passive-network KCL correction when the ideal op-amp output
+    // reaches its modelled rails. This does not model TL07x open-loop dynamics:
+    // it only updates passive nodes/capacitors against the actual driven voltage.
+    // Default OFF keeps the historical fitted path sample-for-sample unchanged.
+    void setRailAwarePassiveFeedback(bool e) noexcept
+    {
+        if (e != railAwarePassiveFeedback)
+        {
+            railAwarePassiveFeedback = e;
+            dirty = true; // generate the sensitivity only when the mode is used
+        }
+    }
+
     // R36 (Wt -> (-), schematic-verified 3.3k, pixel-zoom 2026-07-19) — TREBLE's own
     // wiper-leg series resistor. Phase 9 A2c (session 24-25): the captured unit's
     // TREBLE boost-to-cut SPAN (matched-pair, dsp.md's isolation method) is ~5 dB
@@ -177,6 +190,25 @@ public:
         double x[7];
         mna::matvec<7>(yinv, rhs, x);
 
+        const double drivenOut = rail.process(x[6]);
+        if (railAwarePassiveFeedback && mna::differs(drivenOut, x[6]))
+        {
+            // The ideal solve's ordinary nodes are exactly the passive
+            // network solution at output x[6] and Vminus=0. By superposition,
+            // changing the driven output by delta shifts each passive node
+            // by its precomputed voltage sensitivity; slot 6 is now Vminus.
+            const double delta = drivenOut - x[6];
+            double corrected[7];
+            for (int i = 0; i < 7; ++i)
+                corrected[i] = x[i] + railSensitivity7[i] * delta;
+            ieq25 = 2.0 * gc25 * (corrected[0] - corrected[2]) - ieq25;
+            ieq26 = 2.0 * gc26 * (corrected[1] - corrected[2]) - ieq26;
+            ieq28 = 2.0 * gc28 * (corrected[3] - vin) - ieq28;
+            ieq29 = 2.0 * gc29 * (corrected[4] - drivenOut) - ieq29;
+            ieq30 = 2.0 * gc30 * (drivenOut - railSensitivity7[6] * delta) - ieq30;
+            return drivenOut;
+        }
+
         // Capacitor state update: Ieq_new = 2*gc*v_ab − Ieq_old.
         ieq25 = 2.0 * gc25 * (x[0] - x[2]) - ieq25; // A − Wb
         ieq26 = 2.0 * gc26 * (x[1] - x[2]) - ieq26; // B − Wb
@@ -184,7 +216,7 @@ public:
         ieq29 = 2.0 * gc29 * (x[4] - x[6]) - ieq29; // T1 − Vout
         ieq30 = 2.0 * gc30 * x[6] - ieq30;          // Vout − (−)=0
 
-        return rail.process(x[6]); // Vout, then op-amp rails
+        return drivenOut; // identical to the legacy rail-only output
     }
 
 private:
@@ -204,19 +236,70 @@ private:
         rhs[7] = gc21 * vin + ieq21 - ieq28; // Vi
         double x[8];
         mna::matvec<8>(yinv8, rhs, x);
+
+        const double drivenOut = rail.process(x[6]);
+        if (railAwarePassiveFeedback && mna::differs(drivenOut, x[6]))
+        {
+            const double delta = drivenOut - x[6];
+            double corrected[8];
+            for (int i = 0; i < 8; ++i)
+                corrected[i] = x[i] + railSensitivity8[i] * delta;
+            ieq25 = 2.0 * gc25 * (corrected[0] - corrected[2]) - ieq25;
+            ieq26 = 2.0 * gc26 * (corrected[1] - corrected[2]) - ieq26;
+            ieq28 = 2.0 * gc28 * (corrected[3] - corrected[7]) - ieq28;
+            ieq29 = 2.0 * gc29 * (corrected[4] - drivenOut) - ieq29;
+            ieq30 = 2.0 * gc30 * (drivenOut - railSensitivity8[6] * delta) - ieq30;
+            ieq21 = 2.0 * gc21 * (corrected[7] - vin) - ieq21;
+            return drivenOut;
+        }
+
         ieq25 = 2.0 * gc25 * (x[0] - x[2]) - ieq25;
         ieq26 = 2.0 * gc26 * (x[1] - x[2]) - ieq26;
         ieq28 = 2.0 * gc28 * (x[3] - x[7]) - ieq28; // T3 - Vi
         ieq29 = 2.0 * gc29 * (x[4] - x[6]) - ieq29;
         ieq30 = 2.0 * gc30 * x[6] - ieq30;
         ieq21 = 2.0 * gc21 * (x[7] - vin) - ieq21;  // Vi - Vin
-        return rail.process(x[6]);
+        return drivenOut;
     }
 
     void setPos(double& slot, double v) noexcept
     {
         const double c = v < 1e-6 ? 1e-6 : (v > 1.0 - 1e-6 ? 1.0 - 1e-6 : v);
         if (mna::differs(c, slot)) { slot = c; dirty = true; }
+    }
+
+    // Passive-node sensitivity to an externally driven op-amp output.
+    // The ideal matrix's slot 6 is output Vout and its row asserts Vminus=0.
+    // In this passive matrix slot 6 instead denotes the input Vminus. The
+    // actual output O is a known source on R34, C29 and the R37||C30 feedback.
+    // ypass^-1 * p is independent of both capacitor history and signal voltage;
+    // compute once whenever knobs/caps make the nodal matrix dirty.
+    template <int N>
+    void rebuildRailSensitivity(const double (&ideal)[N][N],
+                                double (&out)[N]) noexcept
+    {
+        double passive[N][N];
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                passive[i][j] = ideal[i][j];
+
+        passive[1][6] = 0.0;               // B --R34--> O
+        passive[4][6] = 0.0;               // T1 --C29--> O
+        passive[2][6] = -1.0 / kR35;      // Wb --R35--> Vminus
+        passive[5][6] = -1.0 / r36;       // Wt --R36--> Vminus
+        passive[6][2] = -1.0 / kR35;
+        passive[6][5] = -1.0 / r36;
+        passive[6][6] = 1.0 / kR35 + 1.0 / r36
+                       + 1.0 / kR37 + gc30;
+
+        double drive[N] = {};
+        drive[1] = 1.0 / kR34;
+        drive[4] = gc29;
+        drive[6] = 1.0 / kR37 + gc30;
+        double inverse[N][N];
+        if (mna::invert<N>(passive, inverse))
+            mna::matvec<N>(inverse, drive, out);
+        // Keep the previous good sensitivity on singular/invalid pot values.
     }
 
     void rebuild() noexcept
@@ -249,6 +332,8 @@ private:
                 for (int j = 0; j < 7; ++j)
                     yinv[i][j] = tmp[i][j];
         }
+        if (railAwarePassiveFeedback && c21 <= 0.0)
+            rebuildRailSensitivity<7>(Y, railSensitivity7);
         // else keep the previous good inverse (degenerate pot endpoint).
         if (c21 > 0.0)
         {
@@ -271,6 +356,8 @@ private:
                     for (int j = 0; j < 8; ++j)
                         yinv8[i][j] = tmp8[i][j];
             }
+            if (railAwarePassiveFeedback)
+                rebuildRailSensitivity<8>(Y8, railSensitivity8);
         }
         dirty = false;
     }
@@ -278,6 +365,9 @@ private:
     double gc25 = 0.0, gc26 = 0.0, gc28 = 0.0, gc29 = 0.0, gc30 = 0.0;
     double c21 = 0.0, gc21 = 0.0, ieq21 = 0.0; // C21 input-coupling cap (0 = not in this stage)
     double yinv8[8][8] = {};
+    double railSensitivity7[7] = {};
+    double railSensitivity8[8] = {};
+    bool railAwarePassiveFeedback = false;
     double posBass = 0.5, posTreble = 0.5; // electrical pot fractions (0.5 = flat)
     double r36 = kR36; // runtime-settable; see setTrebleWiperR
     double yinv[7][7] = {};

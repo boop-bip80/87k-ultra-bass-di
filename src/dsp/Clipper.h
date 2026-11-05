@@ -296,6 +296,40 @@ public:
     void setADAA(Adaa m) noexcept { adaaMode = m; }
     Adaa adaa() const noexcept { return adaaMode; }
 
+    // Research-only D1/D2 Shockley-current model. The legacy hard-clamp behavior
+    // remains the default: diode Is / n*Vt have not been measured on the retail
+    // pedal. In current mode the diode currents participate in the node-W KCL,
+    // rather than clamping W *after* the feedback capacitor state was solved.
+    void setDiodeCurrentModel(bool enabled, double saturationA = 5.0e-9,
+                              double emissionVoltageV = 0.052,
+                              double positiveRailV = 9.0) noexcept
+    {
+        // Disabling is unconditional, even when a caller supplies invalid
+        // calibration data while turning the research mode back off.
+        if (! enabled)
+        {
+            diodeCurrentMode = false;
+            return;
+        }
+        // Numerical/model validity envelope, NOT a claim that these bounds
+        // were measured in a B7K Ultra. Outside this domain exponentials and
+        // their products can overflow despite the local exponent safeguard.
+        if (! std::isfinite(saturationA) || saturationA < 1.0e-18
+            || saturationA > 1.0e-3
+            || ! std::isfinite(emissionVoltageV) || emissionVoltageV < 0.005
+            || emissionVoltageV > 0.25
+            || ! std::isfinite(positiveRailV)
+            || positiveRailV < physicalTripPoint() + 0.5
+            || positiveRailV > 48.0)
+            return;
+        diodeSaturationA = saturationA;
+        diodeEmissionVoltageV = emissionVoltageV;
+        diodeRailV = positiveRailV;
+        diodeCurrentMode = enabled;
+    }
+    bool diodeCurrentModelEnabled() const noexcept { return diodeCurrentMode; }
+    double probeNodeW() const noexcept { return wPrev; }
+
     // ---- Test/oracle probes (session 123) -----------------------------------
     // Thin forwarders to the VTC internals, so ClipperTest can gate the
     // ANTIDERIVATIVE ITSELF (dV/dw == vtc, C1 at the trip point, exact-at-DC,
@@ -337,6 +371,9 @@ public:
             physDevice = 0;
             clampHi = kClampHi;
             clampLo = kClampLo;
+            // An existing research rail must remain above the new self-bias.
+            if (diodeCurrentMode && diodeRailV < physicalTripPoint() + 0.5)
+                diodeCurrentMode = false;
             return;
         }
         if (phys && physDevice == device && std::abs(physVcc - vcc) < 1e-12 && std::abs(physR19 - r19) < 1e-12)
@@ -351,6 +388,8 @@ public:
         physR19 = r19;
         clampHi = 9.6 - phys->vm;   // D1 (anode W, cathode +9V): conducts ~0.6 V above the rail
         clampLo = -0.6 - phys->vm;  // D2 (anode GND, cathode W): conducts ~0.6 V below ground
+        if (diodeCurrentMode && diodeRailV < physicalTripPoint() + 0.5)
+            diodeCurrentMode = false; // incompatible +rail after physical trip changes
         wPrev = 0.0;
     }
 
@@ -500,7 +539,7 @@ public:
         double lo, hi;
         double w = wPrev; // warm start
         double f;
-        if (adaaMode == Adaa::Off || ! adaaExact())
+        if (! diodeCurrentMode && (adaaMode == Adaa::Off || ! adaaExact()))
         {
             const double w0 = (gIn * x - ic - ieq14) / sum;
             const double rad = gFb * satBound() / sum + 1e-12;
@@ -545,7 +584,11 @@ public:
         //       the step still at half the bracket width.
         double dwOld = hi - lo, dw = dwOld;
         double fp = solveFp(w);
-        for (int it = 0; it < kNewtonIters; ++it)
+        // The exponentially steep diode-current branch needs more bisection
+        // room than the fitted VTC; the default/legacy path still uses exactly
+        // the measured 12-iteration limit.
+        const int iterationLimit = diodeCurrentMode ? 32 : kNewtonIters;
+        for (int it = 0; it < iterationLimit; ++it)
         {
             if ((((w - hi) * fp - f) * ((w - lo) * fp - f) > 0.0)
                 || (std::abs(2.0 * f) > std::abs(dwOld * fp)))
@@ -570,10 +613,13 @@ public:
         // ---- D1/D2 rail clamps at node W (normally inert) -------------------
         // Read the CONSTANTS directly: there is deliberately no mutable copy of
         // the window any more, so no fit can reach it (session-118 bug fix).
-        if (w > clampHi)
-            w = clampHi;
-        else if (w < clampLo)
-            w = clampLo;
+        if (! diodeCurrentMode)
+        {
+            if (w > clampHi)
+                w = clampHi;
+            else if (w < clampLo)
+                w = clampLo;
+        }
 
         // ⚠ ORDER IS LOAD-BEARING: y must be read with the OLD wPrev, because in
         // ADAA mode it is a function of BOTH samples. Emitting the substituted
@@ -649,11 +695,38 @@ private:
     // and any gate can share ONE definition (see the KCL derivation in the header).
     inline double solveF(double w, double x, double ic) const noexcept
     {
-        return gIn * (x - w) - ic + gFb * (vtcSub(w) - w) - ieq14;
+        const double base = gIn * (x - w) - ic + gFb * (vtcSub(w) - w) - ieq14;
+        if (! diodeCurrentMode)
+            return base;
+        // D2 conducts from ground to W+Vm; D1 conducts from W+Vm to +Vrail.
+        const double lowExp = (-w - physicalTripPoint()) / diodeEmissionVoltageV;
+        const double highExp = (w + physicalTripPoint() - diodeRailV)
+                                / diodeEmissionVoltageV;
+        return base + diodeSaturationA * diodeExpm1Safe(lowExp)
+                    - diodeSaturationA * diodeExpm1Safe(highExp);
     }
     inline double solveFp(double w) const noexcept
     {
-        return -gIn + gFb * (vtcSubDeriv(w) - 1.0);
+        const double base = -gIn + gFb * (vtcSubDeriv(w) - 1.0);
+        if (! diodeCurrentMode)
+            return base;
+        const double lowExp = (-w - physicalTripPoint()) / diodeEmissionVoltageV;
+        const double highExp = (w + physicalTripPoint() - diodeRailV)
+                                / diodeEmissionVoltageV;
+        return base - (diodeSaturationA / diodeEmissionVoltageV)
+                    * (diodeExpDerivSafe(lowExp) + diodeExpDerivSafe(highExp));
+    }
+
+    // Overflow-safe continuation of exp(z)-1. Beyond z=50 the diode current
+    // saturates numerically; its derivative must then be zero too, or Newton's
+    // slope would disagree with the residual being solved.
+    static inline double diodeExpm1Safe(double z) noexcept
+    {
+        return std::expm1(std::min(z, 50.0));
+    }
+    static inline double diodeExpDerivSafe(double z) noexcept
+    {
+        return z > 50.0 ? 0.0 : std::exp(z);
     }
 
     // ---- The substituted VTC and its derivative (session 123) ---------------
@@ -814,6 +887,9 @@ private:
     std::shared_ptr<const cmosvtc::Table> primedSimple, primedExtended;
     double primedVcc = -1.0, primedR19 = -1.0;
     double clampHi = kClampHi, clampLo = kClampLo;
+    bool diodeCurrentMode = false;
+    double diodeSaturationA = 5.0e-9, diodeEmissionVoltageV = 0.052;
+    double diodeRailV = 9.0;
     // Phase-7 capture-fit amplitude params (FitParams.h), nominal-initialised.
     double a0 = kA0, satLo = kSatLo, satHi = kSatHi, hardness = kHardness;
     // Feedback branch (R18 || C14).

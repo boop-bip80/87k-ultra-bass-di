@@ -164,6 +164,24 @@ public:
     void setRailClampEnabled(bool e) noexcept { rail.setEnabled(e); }
     void setRailVoltages(double vNeg, double vPos) noexcept { rail.setRailVoltages(vNeg, vPos); }
 
+    // Experimental: solve the passive RC network against the op-amp's actual
+    // driven output during rail limiting. The legacy ideal-virtual-ground path
+    // remains bit-exact unless explicitly enabled. This is not a validated
+    // retail TL07x model; open-loop gain is a documented research assumption.
+    void setRailAwarePassiveFeedback(bool enabled) noexcept
+    {
+        if (railAwareFeedback != enabled)
+        {
+            railAwareFeedback = enabled;
+            dirty = true;
+        }
+    }
+    void setOpenLoopGain(double gain) noexcept
+    {
+        if (std::isfinite(gain) && gain >= 1.0)
+            opAmpGain = gain;
+    }
+
     // ---- C31 input coupling cap (session 177, open-work item 16) ----------------
     // LO-MID ONLY: circuit.md has C31 (2u2) between IC5_C's output and this stage's
     // input node "Min".  HI-MID has NO such cap (its input is IC5_D's output wire),
@@ -198,6 +216,9 @@ public:
         if (dirty)
             rebuild();
 
+        if (railAwareFeedback && railPassiveValid)
+            return cInput > 0.0 ? processRailAware5(vin) : processRailAware4(vin);
+
         if (cInput > 0.0)
             return processWithInputCap(vin);
 
@@ -228,6 +249,118 @@ public:
     }
 
 private:
+    // The op-amp output is an externally driven branch, not an MNA unknown.
+    // Replacing the ideal virtual-ground constraint with the physical inverting
+    // node makes the passive feedback network linear in its driven output O:
+    //      V_minus(O) = baseMinus + outputSensitivity * O.
+    // Combining this with O=RailClamp(-A*V_minus(O)) gives one monotone scalar
+    // equation. The passive matrices/influence vectors are precomputed when the
+    // pot/caps move, never per audio sample.
+    void rebuildRailPassive(double gRa, double gRb) noexcept
+    {
+        const double g38 = 1.0 / val.r38, g39 = 1.0 / val.r39;
+        const double g40 = 1.0 / val.r40, g41 = 1.0 / val.r41;
+        railPassiveValid = false;
+        if (cInput > 0.0)
+        {
+            // [Vin, P3, P1, W, Vminus] with C31 feeding Vin from Vs.
+            double Y[5][5] = {};
+            Y[0][0] = gc31 + g38 + g41; Y[0][1] = -g38; Y[0][4] = -g41;
+            Y[1][0] = -g38; Y[1][1] = g38 + gc32 + gRa;
+            Y[1][2] = -gc32; Y[1][3] = -gRa;
+            Y[2][1] = -gc32; Y[2][2] = g39 + gc32 + gRb;
+            Y[2][3] = -gRb;
+            Y[3][1] = -gRa; Y[3][2] = -gRb;
+            Y[3][3] = gRa + gRb + g33eff; Y[3][4] = -g33eff;
+            Y[4][0] = -g41; Y[4][3] = -g33eff;
+            Y[4][4] = g41 + g40 + g33eff;
+            if (!mna::invert<5>(Y, railInverse5)) return;
+            const double outputRhs[5] = { 0.0, 0.0, g39, 0.0, g40 };
+            mna::matvec<5>(railInverse5, outputRhs, railOutputSensitivity5);
+        }
+        else
+        {
+            // [P3, P1, W, Vminus], source Vin is a known input voltage.
+            double Y[4][4] = {};
+            Y[0][0] = g38 + gc32 + gRa; Y[0][1] = -gc32; Y[0][2] = -gRa;
+            Y[1][0] = -gc32; Y[1][1] = g39 + gc32 + gRb;
+            Y[1][2] = -gRb;
+            Y[2][0] = -gRa; Y[2][1] = -gRb;
+            Y[2][2] = gRa + gRb + g33eff; Y[2][3] = -g33eff;
+            Y[3][2] = -g33eff; Y[3][3] = g41 + g40 + g33eff;
+            if (!mna::invert<4>(Y, railInverse4)) return;
+            const double outputRhs[4] = { 0.0, g39, 0.0, g40 };
+            mna::matvec<4>(railInverse4, outputRhs, railOutputSensitivity4);
+        }
+        railPassiveValid = true;
+    }
+
+    inline double solveRailOutput(double baseMinus, double responseToOutput) const noexcept
+    {
+        // O = -A * (baseMinus + responseToOutput*O) before the output clamp.
+        const double linear = -opAmpGain * baseMinus /
+                              (1.0 + opAmpGain * responseToOutput);
+        if (!rail.isEnabled() || rail.process(linear) == linear)
+            return linear;
+        // The monotone root lies between the negative and positive driven rails.
+        double lo = rail.process(-1.0e12);
+        double hi = rail.process(1.0e12);
+        // On actual hard clipping the feedback equation's root is exactly the
+        // rail. Avoid 46 bisections on sustained bass peaks in that common case.
+        if (rail.process(-opAmpGain * (baseMinus + responseToOutput * lo)) == lo)
+            return lo;
+        if (rail.process(-opAmpGain * (baseMinus + responseToOutput * hi)) == hi)
+            return hi;
+        for (int it = 0; it < 46; ++it)
+        {
+            const double middle = 0.5 * (lo + hi);
+            const double driven = rail.process(
+                -opAmpGain * (baseMinus + responseToOutput * middle));
+            if (middle > driven) hi = middle;
+            else                 lo = middle;
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    inline double processRailAware4(double vin) noexcept
+    {
+        const double ieq33 = ieqC33 / dampDiv;
+        const double rhs[4] = { vin / val.r38 + ieqC32, -ieqC32,
+                                ieq33, vin / val.r41 - ieq33 };
+        double base[4];
+        mna::matvec<4>(railInverse4, rhs, base);
+        const double actualOut = solveRailOutput(base[3], railOutputSensitivity4[3]);
+        double nodes[4];
+        for (int j = 0; j < 4; ++j)
+            nodes[j] = base[j] + railOutputSensitivity4[j] * actualOut;
+
+        ieqC32 = 2.0 * gc32 * (nodes[0] - nodes[1]) - ieqC32;
+        const double wiperToMinus = nodes[2] - nodes[3];
+        const double current33 = g33eff * wiperToMinus - ieq33;
+        ieqC33 = 2.0 * gc33 * (wiperToMinus - wiperR * current33) - ieqC33;
+        return actualOut;
+    }
+
+    inline double processRailAware5(double vs) noexcept
+    {
+        const double ieq33 = ieqC33 / dampDiv;
+        const double rhs[5] = { gc31 * vs - ieq31, ieqC32, -ieqC32,
+                                ieq33, -ieq33 };
+        double base[5];
+        mna::matvec<5>(railInverse5, rhs, base);
+        const double actualOut = solveRailOutput(base[4], railOutputSensitivity5[4]);
+        double nodes[5];
+        for (int j = 0; j < 5; ++j)
+            nodes[j] = base[j] + railOutputSensitivity5[j] * actualOut;
+
+        ieq31 = 2.0 * gc31 * (vs - nodes[0]) - ieq31;
+        ieqC32 = 2.0 * gc32 * (nodes[1] - nodes[2]) - ieqC32;
+        const double wiperToMinus = nodes[3] - nodes[4];
+        const double current33 = g33eff * wiperToMinus - ieq33;
+        ieqC33 = 2.0 * gc33 * (wiperToMinus - wiperR * current33) - ieqC33;
+        return actualOut;
+    }
+
     // 5-unknown path [Vin, P3, P1, W, Vout] — see setInputCap(). Stamps are the 4×4's
     // with Vin promoted from a known to an unknown: the two places it entered the RHS
     // (P3's Vin/R38 and the (−) row's −Vin/R41) move to the LHS as −1/R38 and +1/R41,
@@ -267,6 +400,8 @@ private:
         // reordering: same expressions, same inputs, so the 4×4 path is bit-identical.
         dampDiv = 1.0 + gc33 * wiperR;   // == 1 when Rw = 0 -> ideal cap, exactly
         g33eff = gc33 / dampDiv;
+        if (railAwareFeedback)
+            rebuildRailPassive(gRa, gRb);
 
         if (cInput > 0.0)
         {
@@ -328,6 +463,13 @@ private:
     double cInput = 0.0;             // C31 input coupling cap (0 = absent, LO-MID only)
     double gc31 = 0.0;               // its companion conductance
     double yinv5[5][5] = {};         // the 5-unknown inverse, used only when cInput > 0
+    double railInverse4[4][4] = {};
+    double railInverse5[5][5] = {};
+    double railOutputSensitivity4[4] = {};
+    double railOutputSensitivity5[5] = {};
+    double opAmpGain = 100000.0;    // illustrative static TL07x gain, NOT a measured part
+    bool railAwareFeedback = false;
+    bool railPassiveValid = false;
     double ieq31 = 0.0;
     double ieqC32 = 0.0, ieqC33 = 0.0;
     bool dirty = true;

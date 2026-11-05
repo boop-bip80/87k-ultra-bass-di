@@ -20,7 +20,8 @@ than it could support.
 > against the retail pedal. See [the accuracy audit](docs/accuracy-audit.md) and the reference sources
 > below. The [schematic provenance ledger](docs/schematic-provenance.md) separates original-manufacturer
 > specifications from DIY-clone component values. The missing evidence must be collected before a
-> parity claim can be made.
+> parity claim can be made. The proposed [retail parity qualification gates](docs/retail-parity-qualification.md)
+> spell out what a reproducible bench-and-audio validation would have to demonstrate; **none is a certificate yet**.
 
 **Round 3 electrical audit:** the *drawn-schematic* model now has opt-in
 Q2 bootstrap-capacitor current and rail-aware Sallen-Key feedback (including
@@ -37,6 +38,16 @@ comparator explicitly rejects XLR takes and changing whole-take THD stimuli.
 Four modified standalone circuit-test executables passed C++17 runtime checks,
 but complete CTest/CI and real hardware parity remain pending. See
 [Round 4 verification and open physics gaps](docs/round4-evidence.md).
+
+**Round 5 circuit-equation hardening:** an offline source-loading polarity error
+has been fixed. Experimental, **default-disabled** circuit solvers now cover
+Shockley D1/D2 currents inside the CMOS clipper's node equation, nonlinear
+J201 R6/C3 source feedback and finite drain conductance, and rail-aware
+passive-capacitor feedback in both mid-band and Baxandall EQ networks. Independent
+stateful circuit oracles and legacy bit-exact tests are registered in CTest.
+These options are engineering research APIs, **not** validated retail-pedal
+settings or currently exposed plugin parameters. See [Round 5 circuit evidence](docs/round5-circuit-evidence.md)
+and the [JFET derivation](docs/round5-jfet-source-feedback.md).
 
 ![Obsidian B7000 plugin UI](image.png)
 
@@ -55,7 +66,10 @@ The public [Darkglass B7K Ultra manual](https://www.darkglass.com/en-gb/pages/mi
 is an authoritative **control/specification** reference, not a component schematic. The
 [Black Mirror VII build documentation](https://pcbguitarmania.com/wp-content/uploads/2021/07/Black-Mirror-VII-1v1-Building-Docs-18-10-2022.pdf)
 is a useful **third-party clone** schematic and BOM. These are different evidentiary sources;
-neither proves identical internal component values in a retail B7K Ultra. Details of the validation
+neither proves identical internal component values in a retail B7K Ultra. Note the distinction:
+Darkglass lists the **ordinary B7K** at nominal **500 kΩ** input impedance, but the **B7K Ultra**
+at nominal **1 MΩ**. The clone's calculated audio-band ~500 kΩ is not evidence of Ultra parity.
+Details of the validation
 limits and test protocol are in [`docs/reference-measurement-protocol.md`](docs/reference-measurement-protocol.md)
 and `analysis/`. The hardware-reference manifest validator deliberately distinguishes *missing
 evidence* (`UNVERIFIED`, exit 2) from *metadata ready for waveform review* (`REVIEW_REQUIRED`, exit 0);
@@ -113,7 +127,9 @@ ngspice reference described under *Accuracy*.
 - **The CD4049UBE clipper** is a shunt-feedback stage solved per sample (bracketed Newton) with the
   4049's *finite* open-loop gain, around either the shipped fitted sigmoid VTC or — opt-in — the
   Köper–Holters two-MOSFET device model with R19 as a self-consistent supply dropper
-  (`src/dsp/CmosInverterVtc.h`). The input diodes are modelled as hard rail clamps.
+  (`src/dsp/CmosInverterVtc.h`). The default models D1/D2 as hard rail clamps;
+  an experimental, normally disabled mode instead solves their Shockley currents
+  within node-W KCL. Its diode parameters have not been measured on retail hardware.
 - **Rail saturation** is applied on every op-amp output stage (enabled in the shipped build, ±2.9/2.7 V
   about VD — an estimate).
 - **Non-schematic corrections.** Three OD-path stages — `OdToneRestore`, `OdMakeup`, `OdDriveTilt` — are

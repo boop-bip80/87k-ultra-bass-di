@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 // =============================================================================
@@ -248,10 +249,40 @@ public:
         // ---- Input HP: trapezoidal companion for C2 -------------------------
         gc2 = kC2 * 2.0 * sampleRate;
         gRin = 1.0 / (kR4 + kR5);
+        gc3Physical = kC3 * 2.0 * sampleRate;
 
         updateShelf();
         reset();
     }
+
+    // Research option: include finite Q1 drain conductance (gds=1/ro) in
+    // the linearized source-degeneration transfer and Thevenin impedance.
+    // The historical fitted approximation remains the default.
+    void setExactFiniteDrainConductance(bool enabled) noexcept
+    {
+        finiteDrainConductance = enabled;
+        updateShelf();
+    }
+
+    // Research option: solve Q1's nonlinear R6/C3 source-node feedback
+    // simultaneously with an ideal long-channel Shockley J201 current law.
+    // This does NOT solve Q1's drain compliance, Q2, or the downstream load;
+    // those require a combined nodal system and physical calibration.
+    // Switching models clears the physical capacitor history.
+    void setPhysicalSourceFeedbackModel(bool enabled,
+                                        double beta = 1.031e-3,
+                                        double vto = -0.718) noexcept
+    {
+        physicalSourceFeedback = enabled;
+        physicalBeta = (beta > 1.0e-12) ? beta : 1.0e-12;
+        physicalPinch = (vto < -1.0e-6) ? -vto : 1.0e-6;
+        updatePhysicalBias();
+        ieqC3Physical = physicalSourceVolts = 0.0;
+    }
+
+    double probePhysicalSourceVoltage() const noexcept { return physicalSourceVolts; }
+    double probePhysicalBiasCurrent() const noexcept { return physicalIdq; }
+    double probePhysicalOverdriveVoltage() const noexcept { return physicalVov; }
 
     // Phase-7 capture fit (FitParams.h). gm sets the shelf POLE (via gm*R6) as
     // well as the gain, so changing it must re-derive the shelf coefficients —
@@ -285,7 +316,7 @@ public:
     SourceZ getSourceZ() const noexcept
     {
         const double gmR6 = gm * kR6;
-        const double rp = ro * gmR6;
+        const double rp = ro * gmR6 + (finiteDrainConductance ? kR6 : 0.0);
         return { ro, rq2, rp, (kR6 * kC3) / rp };
     }
 
@@ -294,6 +325,7 @@ public:
         ieqC2 = 0.0;
         shelfX1 = shelfY1 = 0.0;
         uPrev = 0.0;
+        ieqC3Physical = physicalSourceVolts = 0.0;
     }
 
     // 1st-order ADAA on the waveshaper (dsp.md "ADAA"). Off by default so the
@@ -316,10 +348,14 @@ public:
         // shelf() has DC gain 1 / HF gain (1+gm*R6); dividing by (1+gm*R6) makes
         // this 1/k(s), i.e. the real gate-source voltage the device responds to.
         const double vg = kDiv * vx;
+        if (physicalSourceFeedback)
+            return -solvePhysicalSourceCurrent(vg);
+
         const double vs = sb0 * vg + sb1 * shelfX1 - sa1 * shelfY1;
         shelfX1 = vg;
         shelfY1 = vs;
-        const double vgs = vs / (1.0 + gm * kR6);
+        const double gEffective = gm + (finiteDrainConductance ? (1.0 / ro) : 0.0);
+        const double vgs = vs / (1.0 + gEffective * kR6);
 
         // ---- Square-law drain current (INVERTING) ---------------------------
         const double y = adaa ? adaaShape(vgs, uPrev) : waveshape(vgs);
@@ -338,11 +374,70 @@ private:
     {
         const double c = 2.0 * fs;
         const double tauZ = kR6 * kC3;
-        const double tauP = tauZ / (1.0 + gm * kR6);
+        const double gEffective = gm + (finiteDrainConductance ? (1.0 / ro) : 0.0);
+        const double tauP = tauZ / (1.0 + gEffective * kR6);
         const double a0 = 1.0 + c * tauP;
         sb0 = (1.0 + c * tauZ) / a0;
         sb1 = (1.0 - c * tauZ) / a0;
         sa1 = (1.0 - c * tauP) / a0;
+    }
+
+
+    // Solve the DC self-bias condition Vs=R6*beta*(|VTO|-Vs)^2.
+    // On [0, |VTO|] the residual is strictly increasing and bracketed.
+    void updatePhysicalBias() noexcept
+    {
+        double lo = 0.0, hi = physicalPinch;
+        for (int n = 0; n < 64; ++n)
+        {
+            const double mid = 0.5 * (lo + hi);
+            const double residual = mid / kR6 - physicalBeta *
+                (physicalPinch - mid) * (physicalPinch - mid);
+            if (residual > 0.0) hi = mid;
+            else lo = mid;
+        }
+        const double sourceBias = 0.5 * (lo + hi);
+        physicalVov = physicalPinch - sourceBias;
+        physicalIdq = sourceBias / kR6;
+    }
+
+    // Incremental drain current about the self-biased operating point.
+    // The model assumes Q1 remains saturated; drain-node compliance is NOT
+    // represented here. The square-law cutoff is a genuine current floor.
+    double physicalCurrent(double vg, double vs) const noexcept
+    {
+        const double overdrive = std::max(0.0, physicalVov + vg - vs);
+        return physicalBeta * overdrive * overdrive - physicalIdq;
+    }
+
+    // Trapezoidal companion of C3, implicit R6 source resistance and Q1 Id.
+    // F(vs)=(1/R6+gc3)*vs-ieqC3-IdAC(vg,vs) is strictly increasing,
+    // with derivative >=1/R6+gc3. Bracket from this derivative bound.
+    double solvePhysicalSourceCurrent(double vg) noexcept
+    {
+        const double gBase = 1.0 / kR6 + gc3Physical;
+        const double oldHistory = ieqC3Physical;
+        const auto residual = [&](double vs) noexcept {
+            return gBase * vs - oldHistory - physicalCurrent(vg, vs);
+        };
+
+        const double anchor = physicalSourceVolts;
+        const double f0 = residual(anchor);
+        double lo = anchor, hi = anchor;
+        if (f0 > 0.0) lo -= f0 / gBase;
+        else if (f0 < 0.0) hi -= f0 / gBase;
+
+        // A 48-step bisection bounds normal-audio source-node error well below
+        // 1e-12 V; independent of ambiguous initial Newton guesses.
+        for (int n = 0; n < 48; ++n)
+        {
+            const double mid = 0.5 * (lo + hi);
+            if (residual(mid) > 0.0) hi = mid;
+            else lo = mid;
+        }
+        physicalSourceVolts = 0.5 * (lo + hi);
+        ieqC3Physical = 2.0 * gc3Physical * physicalSourceVolts - oldHistory;
+        return physicalCurrent(vg, physicalSourceVolts);
     }
 
     // ---- The static map, PUBLIC on purpose ----------------------------------
@@ -547,6 +642,13 @@ private:
     // ADAA state.
     bool adaa = false;
     double uPrev = 0.0;
+    bool finiteDrainConductance = false;
+    bool physicalSourceFeedback = false;
+    double physicalBeta = 1.031e-3;
+    double physicalPinch = 0.718;
+    double physicalVov = 0.0, physicalIdq = 0.0;
+    double gc3Physical = kC3 * 2.0 * 48000.0;
+    double ieqC3Physical = 0.0, physicalSourceVolts = 0.0;
 
     // JUCE-free (compiled into pure console tests).
     JfetStage(const JfetStage&) = delete;

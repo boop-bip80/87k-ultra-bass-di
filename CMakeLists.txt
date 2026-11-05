@@ -111,6 +111,12 @@ target_link_libraries(SourceLoadingTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(SourceLoadingTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME SourceLoadingTest COMMAND SourceLoadingTest)
 
+# Independent time-domain polarity and source-impedance boundary oracle.
+add_executable(SourceLoadingBoundaryTest tests/SourceLoadingBoundaryTest.cpp)
+target_link_libraries(SourceLoadingBoundaryTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(SourceLoadingBoundaryTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME SourceLoadingBoundaryTest COMMAND SourceLoadingBoundaryTest)
+
 add_executable(TrebleAttackTest tests/TrebleAttackTest.cpp)
 target_compile_options(TrebleAttackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME TrebleAttackTest COMMAND TrebleAttackTest)
@@ -139,9 +145,18 @@ add_executable(MidBandTest tests/MidBandTest.cpp)
 target_compile_options(MidBandTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME MidBandTest COMMAND MidBandTest)
 
+# Opt-in rail-limited passive-feedback nodal verification (legacy mode inert).
+add_executable(MidBandRailFeedbackTest tests/MidBandRailFeedbackTest.cpp)
+target_compile_options(MidBandRailFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME MidBandRailFeedbackTest COMMAND MidBandRailFeedbackTest)
+
 add_executable(BaxandallTest tests/BaxandallTest.cpp)
 target_compile_options(BaxandallTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME BaxandallTest COMMAND BaxandallTest)
+
+add_executable(BaxandallRailFeedbackTest tests/BaxandallRailFeedbackTest.cpp)
+target_compile_options(BaxandallRailFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME BaxandallRailFeedbackTest COMMAND BaxandallRailFeedbackTest)
 
 add_executable(EqPreGainTest tests/EqPreGainTest.cpp)
 target_compile_options(EqPreGainTest PRIVATE ${PEDAL_WARNING_FLAGS})
@@ -154,6 +169,10 @@ add_test(NAME MasterOutTest COMMAND MasterOutTest)
 add_executable(JfetStageTest tests/JfetStageTest.cpp)
 target_compile_options(JfetStageTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME JfetStageTest COMMAND JfetStageTest)
+
+add_executable(JfetPhysicalFeedbackTest tests/JfetPhysicalFeedbackTest.cpp)
+target_compile_options(JfetPhysicalFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetPhysicalFeedbackTest COMMAND JfetPhysicalFeedbackTest)
 
 # The only test that ENABLES the rail clamp — every stage test runs it off (the
 # default) against a linear oracle, which is how the signed-railNeg DC bug
@@ -171,6 +190,18 @@ add_test(NAME RailHeadroomExtendedTest COMMAND RailHeadroomExtendedTest)
 add_executable(ClipperTest tests/ClipperTest.cpp)
 target_compile_options(ClipperTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ClipperTest COMMAND ClipperTest)
+
+add_executable(ClipperDiodeTest tests/ClipperDiodeTest.cpp)
+target_compile_options(ClipperDiodeTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ClipperDiodeTest COMMAND ClipperDiodeTest)
+
+add_executable(ClipperDiodeAdversarialTest tests/ClipperDiodeAdversarialTest.cpp)
+target_compile_options(ClipperDiodeAdversarialTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ClipperDiodeAdversarialTest COMMAND ClipperDiodeAdversarialTest)
+
+add_executable(ClipperDiodePhysicalAdversarialTest tests/ClipperDiodePhysicalAdversarialTest.cpp)
+target_compile_options(ClipperDiodePhysicalAdversarialTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ClipperDiodePhysicalAdversarialTest COMMAND ClipperDiodePhysicalAdversarialTest)
 
 # Validates the *generic* CD4049 inverter's KCL/supply-drop solve, self-bias
 # and interpolation independently of any claims about a retail Ultra PCB.
