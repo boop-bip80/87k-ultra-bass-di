@@ -140,7 +140,7 @@ public:
         vs.setVoltage(x);
         vs.incident(inv.reflected());
         inv.incident(vs.reflected());
-        return chowdsp::wdft::voltage<double>(r2);
+        return -chowdsp::wdft::voltage<double>(r2);
     }
 
 private:
