@@ -8,7 +8,7 @@
 ```
 Build:  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 AU:     cmake --build build --target ObsidianB7000_AU   (auto-installs; bump VERSION to force a Logic rescan)
-Tests:  ctest --test-dir build --output-on-failure -j 12          # 22/22; never bare ctest
+Tests:  ctest --test-dir build --output-on-failure -j 12          # 23/23; never bare ctest
 Format: clang-format -i src/**/*.{cpp,h}
 ```
 
@@ -26,6 +26,11 @@ question, and `dsp-validator` after any DSP stage change.
 
 ## Essential reading
 
+- **`docs/accuracy-audit.md`** — what the model does and does not match (independent ngspice reference,
+  results, structural errors found, every constant that departs from the drawn board). Start here for any
+  accuracy claim. `analysis/spice_reference/` is the reference (`compare_*.py`, `gen_reference.py`);
+  `FitParams::schematic()` / `OfflineRender --schematic` / `-DOBSIDIAN_SCHEMATIC_MODEL=ON` select the
+  drawn-value configuration.
 - **`docs/nonlinear-component-modeling.md`** — the two non-WDF-native parts, the CD4049UBE clipper
   and the J201 JFET stage: datasheets/papers/SPICE and the modelling approach used for each.
 - **`docs/calibration-and-gain-staging.md`** — `kInputRef` calibration, output-makeup calibration,
@@ -53,8 +58,11 @@ Per-stage implementations live in `src/dsp/` (one header per stage; `PedalChain.
 together, `PedalDSP.h` is the per-channel wrapper). `MASTER` volume, the 3-way `ATTACK` switch, and
 the switchable mid-band frequencies are **engineered additions** (tagged `[ENG]` in `circuit.md`) —
 the schematic on hand is the original B7K, and these behaviours are built to match the Ultra's
-documented control surface rather than a verified Ultra schematic. Everything else is
-schematic-verified.
+documented control surface rather than a verified Ultra schematic. The *topology* of everything else is
+schematic-verified, but the shipped *values* are not the drawn ones — 34 constants are fitted to captures
+(see `docs/accuracy-audit.md` §6) and three OD-path stages are non-schematic corrections. **Do not describe
+the shipped build as "circuit-accurate" or "from real component values"**; use the measured statements in
+`docs/accuracy-audit.md`.
 
 Two footswitches: main true bypass, and a second `dist_engage` that mutes only the overdrive branch
 (forces the BLEND crossfade to 100% clean) without disturbing the EQ/MASTER/output stage.
@@ -67,7 +75,7 @@ variants):
 
 | Constant | Value | File |
 |---|---|---|
-| `c21R` | 130 kΩ | `FitParams.h` |
+| `c21Cap` | 1 µF, solved INSIDE `Baxandall` (was a fixed-R HP, `c21R` = 130 kΩ, now the legacy path) | `FitParams.h`, `Baxandall.h` |
 | `jfetSatNeg` | 1.9 | `FitParams.h` |
 | Treble/ATTACK ladder (17 constants) | fitted set, not drawn values | `FitParams.h` |
 | `kInputRef` | 0.90 | `FitParams.h` |
@@ -87,7 +95,7 @@ variants):
 
 ## Testing
 
-`ctest --test-dir build --output-on-failure -j 12` — 22/22. Per-stage tests validate each WDF stage
+`ctest --test-dir build --output-on-failure -j 12` — 23/23 (incl. `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
 against the closed-form oracle in `analysis/eq_reference.py`; `ClipperTest`/`JfetStageTest` cover
 the two nonlinear stages; `OSValidationTest`/`OSFidelity` cover oversampling and aliasing;
 `SwitchTransitionTest` covers the switch crossfades; `FinalSweepTest` is a full control sweep (every
@@ -100,6 +108,15 @@ shape, swept THD, per-order harmonics, and null depth.
 
 ## Known limitations
 
+- **The shipped calibration is far from the drawn circuit** (9–12 dB rms in the OD path, 1.5–10 dB rms in
+  the EQ, against ngspice of the drawn schematic) and its captures are not in the repo. The schematic
+  configuration tracks ngspice closely (clean ≲0.4 dB rms, OD small-signal ≈1 dB rms, CD4049 stage within
+  0.3 % swing) but is not verified against hardware. `docs/accuracy-audit.md` §5/§7: three structural
+  errors were found (C21 fixed-R, J201 Q2 bootstrap, bridged-T loading); the last two are opt-in because the
+  shipped fit sits on top of the old structure and has not been re-fitted. **Re-fitting the 17-value ladder,
+  C7 and `jfetGm` on the corrected structure needs the captures and is the obvious next step.**
+- The J201 large-signal shaper still uses fitted constants even in schematic mode (clipping onset differs
+  from ngspice by ~20 dB in H3 around −30 dBFS).
 - The overdrive path reads quiet relative to the reference validation target, worst at GRUNT
   flat/boost. A clipper-headroom fix was investigated and found not to fit inside the pedal's own
   9 V supply rail — this is now understood to be a structural limit, not open work.

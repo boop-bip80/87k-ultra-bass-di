@@ -248,7 +248,17 @@ void ObsidianB7000AudioProcessor::prepareToPlay(double sampleRate, int samplesPe
         // two would otherwise diverge). Called after prepare() so each stage re-derives
         // its coefficients from the stored sample rate. The DAW-domain scalars
         // (kInputRef/kOutputMakeup) are deliberately NOT here — they live in GainStaging.h.
+#ifdef OBSIDIAN_SCHEMATIC_MODEL
+        // Build option -DOBSIDIAN_SCHEMATIC_MODEL=ON: every capture-fitted constant put back to its DRAWN
+        // schematic value, the non-schematic OD correction stages bypassed, the physical CD4049 VTC and the
+        // coupled bridged-T/Sallen-Key solve on. This is the configuration tests/SchematicParityTest.cpp
+        // gates against ngspice. It is a different SOUND from the shipped calibration (louder/tighter OD, see
+        // docs/accuracy-audit.md), not a "better" default — the shipped build is fitted to reference captures.
+        // The tables it builds allocate, so this lives in prepareToPlay, never on the audio thread.
+        d.setFitParams(FitParams::schematic());
+#else
         d.setFitParams(FitParams{});
+#endif
         d.setFactorOrder(startOrder);
         // Seed the CONTROL state at the knobs' actual current positions before
         // reset(), for the same reason the pot smoothers are seeded below: reset()

@@ -37,6 +37,23 @@
 > hardware unit.** The fits track hardware closely on the linear path, but treat them as reference-
 > capture calibrations rather than as facts about a physical board.
 
+## ⚠ 2026-11 audit — read before relying on any "verified" or "fitted" note below
+
+An independent ngspice netlist of the drawn schematic (`analysis/spice_reference/`, results in
+`docs/accuracy-audit.md`) changes three statements made elsewhere in this file's history:
+* **C21** is NOT a first-order HP into a fixed resistance. It works against the tone stack's real,
+  knob-dependent input impedance and is now solved inside `Baxandall` (`c21Cap`; the drawn board has 100 n,
+  the shipped calibration 1 µ). The "`c21R` 130 k" and "C21 into the ~10k stack ≈ 159 Hz HP" notes are the
+  legacy fixed-R path.
+* **J201 Q2 (active load)** is a bootstrapped R + L to AC ground (R = 1/gm2, L = (R9‖R10)·C4/gm2), 1.4 kΩ at
+  LF → ~100 kΩ at 1 kHz — not a fixed "fully bootstrapped" 1 MΩ. The fitted ladder/C7/`jfetGm` values
+  were fitted on top of the fixed-Rq2 structure and plausibly compensate for it.
+* **The bridged-T is NOT "unloaded"** above ~1 kHz: R24 and the IC4_B input network load it (up to 4 dB at
+  4 kHz). `RecoveryBridgedT::setCoupledSk` solves them together.
+* The R19-dropped rail is **not** a fixed 5.64 V clip ceiling: with the output high (NMOS off) there is no
+  crowbar current and the output reaches ~8.6 V, so the drawn clipper swings ~8.6 Vpp (the fitted VTC: 1.04).
+  The 5.64 V figure is the *bias-point* rail only.
+
 ## Schematics
 
 Both PDFs render right-side-up; text within an element may be rotated 90° (read visually, don't

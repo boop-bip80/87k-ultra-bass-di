@@ -144,8 +144,8 @@ public:
     // signedness — std::array::operator[] takes size_type, and an int index
     // would make each of the ~35 subscripts in this file an implicit signed->
     // unsigned conversion (-Wsign-conversion).
-    static constexpr size_t N = 7;             // node count
-    static constexpr size_t G = 0, H = 1, M = 2, P = 3, L1 = 4, L2 = 5, Q = 6;
+    static constexpr size_t N = 8;             // node count (7 ladder nodes + the Q2 active-load node J)
+    static constexpr size_t G = 0, H = 1, M = 2, P = 3, L1 = 4, L2 = 5, Q = 6, J = 7;
 
     TrebleAttack() = default;
 
@@ -159,6 +159,7 @@ public:
         gc6 = c6 * twoOverT;
         gc7 = c7 * twoOverT;        // c7 is fittable (defaults to kC7 exactly)
         gc8 = c8 * twoOverT;         // c8 is fittable (defaults to kC8 exactly)
+        gL = (qL2 > 0.0) ? 1.0 / (qL2 * twoOverT) : 0.0;   // Q2 active-load inductor (see setActiveLoad)
 
         prepared = true;
         rebuild();
@@ -351,9 +352,37 @@ public:
             rebuild();
     }
 
+    // ---- Q2 ACTIVE LOAD (the bootstrapped J201 load), added 2026-11 -----------------------
+    // Q2's gate sits on the R9||R10 bias node (~500k to AC ground) and C4 (22n) couples its source
+    // — the stage's output node G — to that gate. Small-signal, Q2 therefore presents an
+    // ADMITTANCE   Y2(s) = gm2/(1 + s*tau) + gds2,   tau = (R9||R10)*C4 = 11 ms,
+    // i.e. a series R2 = 1/gm2 and L2 = tau/gm2 to AC ground (in parallel with gds2 = the `rq2`
+    // term already in the matrix). That is ~1.4 kOhm at LF, rising to ~19 kOhm at 200 Hz, ~100 kOhm
+    // at 1 kHz and only reaching ro at tens of kHz. The previous model replaced it with a single
+    // FIXED Rq2 = 1 MOhm "fully bootstrapped across the audio band", which overstates the drain
+    // impedance — and so the stage's LF/mid gain — by 20-30 dB below ~100 Hz (ngspice of the drawn
+    // schematic, analysis/spice_reference/compare_od.py). `l2 <= 0` disables the branch and leaves
+    // the node isolated (bit-identical to the pre-change stage).
+    void setActiveLoad(double r2Ohm, double l2Henry) noexcept
+    {
+        const double r = (l2Henry > 0.0 && r2Ohm > 0.0) ? r2Ohm : 0.0;
+        const double l = (l2Henry > 0.0 && r2Ohm > 0.0) ? l2Henry : 0.0;
+        if (std::memcmp(&r, &qR2, sizeof(double)) == 0 && std::memcmp(&l, &qL2, sizeof(double)) == 0)
+            return;
+        qR2 = r;
+        qL2 = l;
+        ihL = 0.0;
+        if (prepared)
+        {
+            gL = (qL2 > 0.0) ? 1.0 / (qL2 * twoOverT) : 0.0;
+            rebuild();
+        }
+    }
+
     void reset()
     {
         ieqC5 = ieqC9 = ieqC6 = ieqC7 = ieqC8 = ieqCp = 0.0;
+        ihL = 0.0;
     }
 
     void setAttack(Attack a) noexcept
@@ -396,6 +425,7 @@ public:
         b[L1] = -ieqC5b + ieqC9;     // C5+Rd -> -Ieq ; C9 (a=L1,b=L2) -> +Ieq
         b[L2] = -ieqC9 + ieqC6;      // C9 -> -Ieq ; C6 -> +Ieq
         b[Q] = -ieqC7;               // C7 -> -Ieq
+        b[J] = -ihL;                 // Q2 active-load inductor history (0 when disabled)
 
         if (attack == Attack::Boost) // C8 (a=M,b=P)
         {
@@ -430,6 +460,7 @@ public:
         ieqC6 = 2.0 * gc6 * (v[L2] - v[M]) - ieqC6;
         ieqC7 = 2.0 * gc7 * (v[P] - v[Q]) - ieqC7;
         ieqCp = 2.0 * gcp * (v[H]) - ieqCp;
+        ihL += 2.0 * gL * v[J];   // trapezoidal inductor: ih_new = ih + 2*gL*v   (gL = 0 => stays 0)
         if (attack == Attack::Boost)
             ieqC8 = 2.0 * gc8 * (v[M] - v[P]) - ieqC8;
         else if (attack == Attack::Cut)
@@ -496,6 +527,16 @@ private:
         Y[G][G] += gRq2;                                  // Rq2 (G-GND)
         Y[H][H] += gRp;                                   // Rp  (H-GND)
         Y[H][H] += gcp;                                   // Cp  (H-GND)
+        // ---- Q2 active load: G --R2-- J --L-- GND (J isolated with 1 S to GND when disabled) ----
+        if (qL2 > 0.0)
+        {
+            const double g2 = 1.0 / qR2;
+            Y[G][G] += g2; Y[G][J] -= g2; Y[J][G] -= g2; Y[J][J] += g2 + gL;
+        }
+        else
+        {
+            Y[J][J] = 1.0;
+        }
         // ---- Resistors ----
         const double g7 = 1.0 / r7;
         Y[G][G] += g7; Y[G][M] -= g7; Y[M][G] -= g7; Y[M][M] += g7;     // R7 (G-M)
@@ -593,6 +634,8 @@ private:
     double c7 = kC7;   // fittable coupling cap into IC2_A (see setC7)
     double c8 = kC8;   // fittable ATTACK cap; 0 = removed, which is what the
                        // session-62 two-pole proposal screens with (see setC8)
+    // Q2 active-load branch (R2 + L2 to ground), inductor companion conductance and history.
+    double qR2 = 0.0, qL2 = 0.0, gL = 0.0, ihL = 0.0;
     // Capacitor history (equivalent-source) currents.
     double ieqC5 = 0.0, ieqC9 = 0.0, ieqC6 = 0.0, ieqC7 = 0.0, ieqC8 = 0.0, ieqCp = 0.0;
     // One precomputed nodal-matrix inverse per ATTACK position (Boost/Flat/Cut).

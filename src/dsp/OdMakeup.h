@@ -185,14 +185,18 @@ public:
         rebuild();
     }
 
+    // Bypass = exact identity (FitParams::odEmpirical == 0 — this stage is [ENG], NON-SCHEMATIC).
+    void setBypass(bool b) noexcept { bypassed = b; }
+
     inline double process(double x) noexcept
     {
-        if (inert)
+        if (inert || bypassed)
             return x;                      // exact identity — no state, no rounding
         return hf.process(hi.process(lo.process(x))) * flat;
     }
 
 private:
+    bool bypassed = false;
     void rebuild() noexcept
     {
         flat = std::pow(10.0, g / 20.0);

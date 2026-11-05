@@ -326,6 +326,7 @@ public:
         fit = f;
 
         clipper.setNonlinear(f.clipA0, f.clipSatLo, f.clipSatHi, f.clipK);
+        clipper.setPhysicalVtc(f.clipPhysical, f.clipVcc, f.clipR19); // 0 = fitted sigmoid (shipped)
         // Session 123/124: ADAA mode, gated by OS factor. setNonlinear FIRST —
         // adaaExact() reads the hardness this call installs. The mode itself is
         // resolved in applyAdaaPolicy(), which BOTH this and prepareOd() call,
@@ -349,6 +350,8 @@ public:
             const auto z = jfet.getSourceZ();
             treble.setSourceZ(z.ro, z.rq2, z.rp, z.cp);
         }
+        treble.setActiveLoad(f.jfetQ2Gm > 0.0 ? 1.0 / f.jfetQ2Gm : 0.0,
+                             f.jfetQ2Gm > 0.0 ? f.jfetQ2Tau / f.jfetQ2Gm : 0.0);
         treble.setNotchDamp(f.trebleLadderDampR); // session-19: shallow the 322 Hz notch
         // ---- The two-pole ATTACK topology (session 62's proposal; defaults = the
         // drawn network exactly). ⚠ ORDER MATTERS: setNotchDamp() above writes all
@@ -404,7 +407,11 @@ public:
         odToneRestore.setDepthOffset(f.odNotchDepthDb);  // uniform extra cut (s172)
 
         // [ENG] level-dependent treble tilt — see OdDriveTilt.h before changing anything.
-        odDriveTilt.setEnabled(f.odTiltEnabled != 0);
+        odDriveTilt.setEnabled(f.odTiltEnabled != 0 && f.odEmpirical != 0);
+        odToneRestore.setBypass(f.odEmpirical == 0);
+        odToneShadow.setBypass(f.odEmpirical == 0);
+        odMakeup.setBypass(f.odEmpirical == 0);
+        odMakeupShadow.setBypass(f.odEmpirical == 0);
         odDriveTilt.setTime(f.odTiltTimeMs);
         odDriveTilt.setLaw(f.odTiltF0, f.odTiltS, f.odTiltDbPerDb, f.odTiltRefDbv,
                            f.odTiltMaxCutDb);
@@ -412,7 +419,12 @@ public:
                            f.masterTaperBreak2, f.masterTaperFrac2);
 
         c21.r = f.c21R;
+        // C21: inside the Baxandall MNA when c21Cap > 0 (the default), so it works against the
+        // stack's real knob-dependent input impedance; the legacy fixed-R HP only runs when it is 0.
+        baxandall.setInputCap(f.c21Cap);
         recovery.setComponents(f.btR22, f.btR23, f.btC16, f.btC17);
+        recovery.setCoupledSk(f.btCoupledSk != 0, SallenKeyLPF::kIC4B.r1, SallenKeyLPF::kIC4B.r2,
+                              SallenKeyLPF::kIC4B.c1, SallenKeyLPF::kIC4B.c2);
 
         // RailClamp on EVERY op-amp output (calibration §6 / GATE-4 item). The
         // J201 and CD4049 are deliberately absent: neither is an op-amp, and
@@ -525,7 +537,8 @@ public:
         }
 
         s = odDriveTilt.process(s);
-        s = skB.process(s);
+        if (! recovery.coupledSk())
+            s = skB.process(s);   // coupled mode: IC4_B was solved INSIDE `recovery` (bridged-T + R24 + SK)
         s = skA.process(s);
         return s;
     }
@@ -546,7 +559,7 @@ public:
         t.recovery = recovery.process(t.odCoupling);
         odDriveTilt.observe(buf);
         t.odToneRestore = odDriveTilt.process(odToneRestore.process(t.recovery));
-        t.skB = skB.process(t.odToneRestore);
+        t.skB = recovery.coupledSk() ? t.odToneRestore : skB.process(t.odToneRestore);
         t.skA = skA.process(t.skB);
         return t;
     }
@@ -586,7 +599,8 @@ public:
             odMakeupOut = odMakeup.process(odDown);
         }
         double s = levelBlend.process(cleanDelayed, odMakeupOut);
-        s = c21.process(s);          // C21 100n inter-stage HP (bass shaping)
+        if (! baxandall.hasInputCap())
+            s = c21.process(s);      // legacy fixed-R C21 (only when c21Cap == 0; see FitParams::c21Cap)
         s = eqPreGain.process(s);
         s = baxandall.process(s);
 
@@ -636,7 +650,7 @@ public:
     {
         PostTaps t;
         t.blend = levelBlend.process(cleanDelayed, odDown);
-        t.c21 = c21.process(t.blend);
+        t.c21 = baxandall.hasInputCap() ? t.blend : c21.process(t.blend);
         t.eqPre = eqPreGain.process(t.c21);
         t.baxandall = baxandall.process(t.eqPre);
         t.loMid = loMid.process(t.baxandall);

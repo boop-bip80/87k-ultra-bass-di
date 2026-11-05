@@ -43,6 +43,21 @@
 // =============================================================================
 struct FitParams
 {
+    // ---- Model fidelity switch ------------------------------------------------------------------
+    // 1 (shipped) runs the three EMPIRICAL, non-schematic OD-path correction stages (OdToneRestore,
+    // OdMakeup, OdDriveTilt) that were added to pull the render toward the reference captures.
+    // 0 bypasses all three, which is what an "as drawn" render needs. See FitParams::schematic().
+    int odEmpirical = 1;
+
+    // ---- Physical CD4049 VTC (Clipper::setPhysicalVtc, CmosInverterVtc.h) -----------------------
+    // clipPhysical: 0 = the fitted sigmoid VTC (shipped; clipA0/clipSat*/clipK apply), 1 = Köper-Holters
+    // simple two-MOSFET model, 2 = their extended model. Modes 1/2 solve the inverter with R19 as a
+    // self-consistent supply dropper and swing ~8.6 Vpp (the drawn circuit) instead of ~1.04 Vpp.
+    // clipVcc is the +9 V rail after D3 (8.65 V); clipR19 the 1 k supply dropper.
+    int clipPhysical = 0;
+    double clipVcc = 8.65;
+    double clipR19 = 1.0e3;
+
     // ---- CD4049UBE clipper (Clipper.h) --------------------------------------
     // clipA0 is the PRIMARY fit param: it sets BOTH the closed-loop gain AND the
     // three GRUNT corner frequencies (the input-node impedance is R18/(1+A0)), so
@@ -239,6 +254,14 @@ struct FitParams
     // Removing (not renaming) the old fields is deliberate: a stale
     // `--fit jfetG0=...` now fails loudly in OfflineRender instead of silently
     // setting something with different physical meaning.
+    // ---- Q2 ACTIVE LOAD (TrebleAttack::setActiveLoad) -----------------------------------------
+    // jfetQ2Gm > 0 turns on the frequency-dependent bootstrapped active load: series R2 = 1/gm2 and
+    // L2 = tau/gm2 to AC ground, tau = jfetQ2Tau (= (R9||R10)*C4 = 500k * 22n = 11 ms drawn).
+    // 0 = the legacy fixed-Rq2 path (the shipped calibration was fitted on top of THAT, so it stays
+    // the default; `FitParams::schematic()` turns this on). Nominal gm2 ~ 0.71 mS (ngspice DC point
+    // of the typical J201: Id = 0.12 mA, gm = 0.707 mS).
+    double jfetQ2Gm = 0.0;
+    double jfetQ2Tau = 11.0e-3;
     double jfetGm = 0.10e-3;   // S   session-4 anchor / session-17 HELD (was nominal 0.69e-3; gm*R6 = 0.33)
     double jfetRo = 200.0e3;   // ohm  Q1 drain output resistance (1/gos)
     double jfetRq2 = 1.0e6;    // ohm  Q2 C4-bootstrapped active-load impedance
@@ -545,7 +568,20 @@ struct FitParams
     // tone stack's effective INPUT impedance, which is a nominal ~10k estimate,
     // not a single schematic part. It sets a ~159 Hz highpass that audibly shapes
     // bass, so it is a real fit knob (fit alongside the tone stack).
-    double c21R = 130.0e3;  // RE-AIMED AT HARDWARE (was 220k; 100k before that; nominal 10k).
+    // ⭐ SESSION 2026-11 — C21 IS NOW SOLVED INSIDE THE BAXANDALL STAGE (c21Cap, below), and
+    // c21R is the LEGACY path (used only when c21Cap == 0). Reason: a first-order HP into ONE
+    // fixed R cannot represent a corner that moves with the BASS/TREBLE knobs. Measured against
+    // an independent ngspice netlist of the drawn schematic (analysis/spice_reference/):
+    //   * drawn 100n + any fixed R is wrong by up to +-15 dB at 20 Hz depending on the knob;
+    //   * 1 uF solved INSIDE the stack reproduces the old 130k behaviour at flat / bass+ / bass-
+    //     (rms 0.28 / 0.07 / 0.29 dB over 20 Hz-2 kHz) — i.e. the hardware-anchored ~12 Hz corner
+    //     the c21R fit was re-aimed at is what a 1 uF coupling cap gives into the real stack
+    //     impedance, with the physically correct knob dependence on top.
+    // c21Cap = 1 uF is therefore a CALIBRATION (the drawn clone board has 100n; the captured
+    // Ultra's LF behaviour needs ~1 uF), exactly as c21R was, but now structurally correct.
+    // Set `--fit c21Cap=100e-9` for the drawn board, or 0 for the legacy fixed-R path.
+    double c21Cap = 1.0e-6;
+    double c21R = 130.0e3;  // LEGACY (c21Cap == 0 only). RE-AIMED AT HARDWARE (was 220k; 100k before that; nominal 10k).
                             // Corner ~12.2 Hz (was 7.2). Fitted against the standard reference
                             // captures, then deliberately moved off that fit and re-anchored to
                             // targeted hardware measurements for this specific corner — broadband
@@ -922,6 +958,10 @@ struct FitParams
     double clipC15Cut = 2200.0e-9;         // farads; = schematic C15 (2u2), GRUNT=Cut only
     double odMakeupLowCutDbCut = 2.2;      // dB; GRUNT=Cut only (was effectively 6.0, shared)
 
+    // btCoupledSk = 1 solves the bridged-T TOGETHER with R24 and the IC4_B Sallen-Key (RecoveryBridgedT::
+    // setCoupledSk). The shipped calibration (0) treats the bridged-T as unloaded and the SK as ideal-source
+    // driven, which ngspice of the drawn schematic shows is 1-6 dB too loud between 1 and 8 kHz.
+    int btCoupledSk = 0;
     double btR22 = 100.0e3;
     double btR23 = 33.0e3;
     double btC16 = 680.0e-12;
@@ -1540,4 +1580,68 @@ struct FitParams
     // responds to the GRUNT switch roughly 4x too strongly at the listening setting — a separate,
     // unowned defect that must not be absorbed into this stage.
     double odNotchDepthDb = 3.0;
+
+    // =========================================================================================
+    // schematic() — every capture-fitted constant put back to its DRAWN value
+    // =========================================================================================
+    // The configuration that corresponds to circuit.md's drawn schematic (the original-B7K clone),
+    // for A/B against the shipped calibration and against the independent ngspice reference
+    // (analysis/spice_reference/). It differs from the shipped defaults in these groups:
+    //   * treble/ATTACK ladder: R7, R8-tap split, R11, C5..C9, C7, C8, R12, R14, ladder damping
+    //     (the shipped 17-value set is a fitted candidate, not drawn values);
+    //   * clipper: C11 (4n7), C15 (2u2); the J201 stage: gm/ro/Rq2 from the typical-part SPICE DC
+    //     point and the Q2 bootstrapped active load switched ON (the shipped Rq2 = 1 MOhm is a
+    //     fixed stand-in for it);
+    //   * EQ: C21 = 100n (in-stack), mid-band caps/ratio/wiper R as drawn, R36 = 3k3;
+    //   * the three empirical OD correction stages OFF and the [ENG] BLEND end stop removed.
+    // Pot TAPERS (DRIVE/LEVEL/MASTER) and the op-amp rail ceilings are NOT schematic quantities and
+    // keep their shipped values. The CD4049 VTC is selected by `clipPhysical` (see Clipper.h).
+    static FitParams schematic()
+    {
+        FitParams f;
+        f.odEmpirical = 0;
+        f.btCoupledSk = 1;  // bridged-T + R24 + IC4_B solved as one network (RecoveryBridgedT.h)
+        f.clipPhysical = 2; // the paper's extended two-MOSFET inverter + R19 sag (see CmosInverterVtc.h)
+        f.odTiltEnabled = 0;
+        f.blendEndStop = 0.0;
+        // clipper
+        f.clipC11 = 4.7e-9;
+        f.clipC15 = 2.2e-6;
+        f.clipC15Cut = 2.2e-6;
+        // J201 stage (typical-part SPICE DC point: Id 0.116 mA, gm1 0.695 mS, gds1 0.230 uS, gm2 0.707 mS,
+        // gds2 0.239 uS) with the bootstrapped Q2 load
+        f.jfetGm = 0.695e-3;
+        f.jfetRo = 1.0 / 2.30e-7;
+        f.jfetRq2 = 1.0 / 2.39e-7;
+        f.jfetQ2Gm = 0.707e-3;
+        f.jfetQ2Tau = 11.0e-3;
+        // treble / ATTACK ladder as drawn
+        f.trebleR7 = 200.0e3;
+        f.attackTapRa = 470.0e3;
+        f.attackTapRb = 0.0;
+        f.attackTapRc = 0.0;
+        f.attackTapR11 = 470.0e3;
+        f.trebleC5 = 22.0e-9;
+        f.attackC5TrimBoost = 0.0;
+        f.attackC5TrimCut = 0.0;
+        f.trebleLadderDampR = 0.0;
+        f.attackDampBoost = -1.0;
+        f.attackDampCut = -1.0;
+        f.trebleC8 = 220.0e-12;
+        f.trebleLadderR12 = 6.8e3;
+        f.trebleLadderR14 = 22.0e3;
+        f.trebleC9 = 22.0e-9;
+        f.trebleC6 = 22.0e-9;
+        f.trebleC7 = 100.0e-9;
+        // EQ as drawn
+        f.c21Cap = 100.0e-9;
+        f.trebleWiperR = 3.3e3;
+        f.midLoCap250 = f.midLoCap500 = f.midLoCap1k = 22.0e-9;
+        f.midCapRatioLo = 1.0;
+        f.midWiperRLo = 0.0;
+        f.midHiCap750 = f.midHiCap1500 = f.midHiCap3k = 680.0e-12;
+        f.midCapRatioHi = 10.0;
+        f.midWiperRHi = 0.0;
+        return f;
+    }
 };

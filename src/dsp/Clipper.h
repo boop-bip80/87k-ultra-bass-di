@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cmath>
+#include <memory>
+
+#include "CmosInverterVtc.h"
 
 // =============================================================================
 // Stage 5 — CD4049UBE CMOS-inverter clipper (IC3) + GRUNT bank  [THE distortion]
@@ -309,6 +312,37 @@ public:
         hardness = k;
     }
 
+    // ---- PHYSICAL CD4049 VTC (opt-in; src/dsp/CmosInverterVtc.h) ------------------------------
+    // device: 0 = the fitted sigmoid below (shipped), 1 = Köper-Holters "simple" two-MOSFET model,
+    // 2 = their extended model; both with the R19 supply dropper solved self-consistently, so the
+    // swing is the drawn circuit's (~8.6 Vpp), not the fitted ~1.04 Vpp. Builds a ~4k-point table —
+    // NOT realtime-safe; call from prepare/fit time only. Re-sending the same arguments is a no-op.
+    // In this mode the D1/D2 clamp window is re-anchored on the model's own trip point, ADAA is
+    // forced off (no closed-form antiderivative; oversampling carries the antialiasing) and the
+    // solver bracket uses the table's own swing instead of satLo/satHi.
+    void setPhysicalVtc(int device, double vcc = 8.65, double r19 = 1.0e3)
+    {
+        if (device != 1 && device != 2)
+        {
+            phys.reset();
+            physDevice = 0;
+            clampHi = kClampHi;
+            clampLo = kClampLo;
+            return;
+        }
+        if (phys && physDevice == device && std::abs(physVcc - vcc) < 1e-12 && std::abs(physR19 - r19) < 1e-12)
+            return;
+        phys = cmosvtc::buildTable(static_cast<cmosvtc::Device>(device), vcc, r19, -4.0, 8.0);
+        physDevice = device;
+        physVcc = vcc;
+        physR19 = r19;
+        clampHi = 9.6 - phys->vm;   // D1 (anode W, cathode +9V): conducts ~0.6 V above the rail
+        clampLo = -0.6 - phys->vm;  // D2 (anode GND, cathode W): conducts ~0.6 V below ground
+        wPrev = 0.0;
+    }
+    bool physicalVtc() const noexcept { return phys != nullptr; }
+    double physicalTripPoint() const noexcept { return phys ? phys->vm : kTripPointV; }
+
     // GRUNT position -> coupling cap. ** UI map VERIFIED against capture 2026-07-22
     // (was ASSUMED since Phase 5): up/Boost = 4n7||220n (MOST low end), mid/Cut = 4n7
     // alone (LEAST), down/Flat = 4n7||47n (MEDIUM). Semantics Cut < Flat < Boost. **
@@ -445,7 +479,7 @@ public:
         if (adaaMode == Adaa::Off || ! adaaExact())
         {
             const double w0 = (gIn * x - ic - ieq14) / sum;
-            const double rad = gFb * (satLo > satHi ? satLo : satHi) / sum + 1e-12;
+            const double rad = gFb * satBound() / sum + 1e-12;
             lo = w0 - rad;
             hi = w0 + rad;
             if (w < lo) w = lo;
@@ -512,10 +546,10 @@ public:
         // ---- D1/D2 rail clamps at node W (normally inert) -------------------
         // Read the CONSTANTS directly: there is deliberately no mutable copy of
         // the window any more, so no fit can reach it (session-118 bug fix).
-        if (w > kClampHi)
-            w = kClampHi;
-        else if (w < kClampLo)
-            w = kClampLo;
+        if (w > clampHi)
+            w = clampHi;
+        else if (w < clampLo)
+            w = clampLo;
 
         // ⚠ ORDER IS LOAD-BEARING: y must be read with the OLD wPrev, because in
         // ADAA mode it is a function of BOTH samples. Emitting the substituted
@@ -673,7 +707,7 @@ private:
     // Named predicate, same posture as JfetStage::adaaExact(): a k != 2 build gets
     // NO ADAA rather than a wrong one, and there is one obvious place to wire in a
     // general-k primitive if the k = 2 anchor is not restored.
-    inline bool adaaExact() const noexcept { return hardness == 2.0; }
+    inline bool adaaExact() const noexcept { return phys == nullptr && hardness == 2.0; }
 
     // Inverter VTC (VD_eff-referenced, 0 = trip point). Inverting asymmetric
     // sigmoid: slope -a0 at 0 (both sides -> C1-continuous), saturating to -satLo
@@ -702,13 +736,22 @@ private:
     // in process() valid; convergence is what rtsafe supplies.
     inline double vtc(double w) const noexcept
     {
+        if (phys)
+            return phys->eval(w);
         if (w >= 0.0)
             return -satLo * sig(a0 * w / satLo);
         return satHi * sig(-a0 * w / satHi);
     }
 
+    inline double satBound() const noexcept
+    {
+        return phys ? phys->yMax * 1.001 + 1e-9 : (satLo > satHi ? satLo : satHi);
+    }
+
     inline double vtcDeriv(double w) const noexcept
     {
+        if (phys)
+            return phys->deriv(w);
         const double u = (w >= 0.0) ? a0 * w / satLo : -a0 * w / satHi;
         return -a0 * sigDeriv(u); // both sides negative (inverting), |.| <= A0
     }
@@ -739,6 +782,12 @@ private:
     }
 
     double fs = 48000.0;
+    // Physical-VTC mode (setPhysicalVtc). `phys` is shared & immutable, so the live/shadow copy on a
+    // GRUNT flip is a refcount bump on the audio thread, not an allocation.
+    std::shared_ptr<const cmosvtc::Table> phys;
+    int physDevice = 0;
+    double physVcc = 8.65, physR19 = 1.0e3;
+    double clampHi = kClampHi, clampLo = kClampLo;
     // Phase-7 capture-fit amplitude params (FitParams.h), nominal-initialised.
     double a0 = kA0, satLo = kSatLo, satHi = kSatHi, hardness = kHardness;
     // Feedback branch (R18 || C14).

@@ -95,6 +95,7 @@ struct Options
 
     bool trimLatency = false;
     bool printFit = false;
+    bool schematic = false; // start from FitParams::schematic() (every fit put back to its drawn value)
 
     FitParams fit {};
 };
@@ -199,6 +200,8 @@ struct FitField
 };
 
 static const FitField kFitFields[] = {
+    {"clipVcc", &FitParams::clipVcc},
+    {"clipR19", &FitParams::clipR19},
     {"clipA0", &FitParams::clipA0},
     {"clipSatLo", &FitParams::clipSatLo},
     {"clipSatHi", &FitParams::clipSatHi},
@@ -210,6 +213,8 @@ static const FitField kFitFields[] = {
     {"clipR16", &FitParams::clipR16},
     // jfetG0/jfetGmR6 were REMOVED by the 2026-07-22 restructure (FitParams.h) —
     // deliberately not aliased, so a stale --fit jfetG0=... fails loudly.
+    {"jfetQ2Gm", &FitParams::jfetQ2Gm},
+    {"jfetQ2Tau", &FitParams::jfetQ2Tau},
     {"jfetGm", &FitParams::jfetGm},
     {"jfetRo", &FitParams::jfetRo},
     {"jfetRq2", &FitParams::jfetRq2},
@@ -263,6 +268,7 @@ static const FitField kFitFields[] = {
     {"odNotchQScale", &FitParams::odNotchQScale},
     {"odNotchDepthDb", &FitParams::odNotchDepthDb},
     {"c21R", &FitParams::c21R},
+    {"c21Cap", &FitParams::c21Cap},
     {"trebleLadderDampR", &FitParams::trebleLadderDampR},
     {"attackTapRa", &FitParams::attackTapRa},
     {"attackTapRb", &FitParams::attackTapRb},
@@ -370,6 +376,29 @@ static void applyFitAssignment(FitParams& fit, const std::string& assignment)
         return;
     }
 
+    if (key == "btcoupledsk")
+    {
+        fit.btCoupledSk = parseBool("--fit btCoupledSk", value) ? 1 : 0;
+        return;
+    }
+
+    if (key == "clipphysical")
+    {
+        // 0 = fitted sigmoid VTC, 1 = simple two-MOSFET model, 2 = extended (FitParams.h clipPhysical).
+        const int mode = parseInt("--fit clipPhysical", value);
+        if (mode < 0 || mode > 2)
+            fail("--fit clipPhysical must be 0, 1 or 2, got '" + value + "'");
+        fit.clipPhysical = mode;
+        return;
+    }
+
+    if (key == "odempirical")
+    {
+        // 0 bypasses OdToneRestore / OdMakeup / OdDriveTilt (the non-schematic correction stages).
+        fit.odEmpirical = parseBool("--fit odEmpirical", value) ? 1 : 0;
+        return;
+    }
+
     if (key == "odtiltenabled")
     {
         // Session 166.  An on/off gate, not a double — and the ONE `--fit` this stage
@@ -422,6 +451,8 @@ static void printUsage()
         "  --os 1|2|4|8          --block <samples>\n"
         "\n"
         "Calibration:\n"
+        "  --schematic           baseline = FitParams::schematic() (every fit put back to its drawn\n"
+        "                        value, empirical OD correction stages bypassed); --fit applies on top\n"
         "  --fit name=value      repeatable; any FitParams field (see --print-fit)\n"
         "  --print-fit           dump the fit params + resolved knob mapping used\n"
         "  --trim-latency        opt-in; do NOT use with analyze.py::align()\n");
@@ -431,6 +462,7 @@ static Options parseArgs(int argc, char** argv)
 {
     Options o;
     std::vector<std::string> positional;
+    std::vector<std::string> fitAssignments; // applied AFTER the loop so --schematic's baseline always comes first
 
     for (int i = 1; i < argc; ++i)
     {
@@ -465,7 +497,8 @@ static Options parseArgs(int argc, char** argv)
         else if (a == "--output-makeup") o.outputMakeup = parseDouble(a, value());
         else if (a == "--os") o.osFactor = parseInt(a, value());
         else if (a == "--block") o.blockSize = parseInt(a, value());
-        else if (a == "--fit") applyFitAssignment(o.fit, value());
+        else if (a == "--schematic") o.schematic = true;
+        else if (a == "--fit") fitAssignments.push_back(value());
         else if (a == "--print-fit") o.printFit = true;
         else if (a == "--trim-latency") o.trimLatency = true;
         else if (! a.empty() && a[0] == '-') fail("unknown option '" + a + "'");
@@ -487,6 +520,12 @@ static Options parseArgs(int argc, char** argv)
     if (o.inputRef <= 0.0)
         fail("--input-ref must be > 0 (it divides back out of the output gain)");
 
+    // --schematic replaces the whole baseline, so it must be applied before any --fit override,
+    // whatever order the flags were typed in.
+    if (o.schematic)
+        o.fit = FitParams::schematic();
+    for (const auto& fa : fitAssignments)
+        applyFitAssignment(o.fit, fa);
     return o;
 }
 
