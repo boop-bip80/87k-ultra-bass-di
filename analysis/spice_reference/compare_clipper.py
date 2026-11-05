@@ -34,8 +34,8 @@ def spice_case(freq, amp, grunt):
     return harmonics(t, o["co"], freq)
 
 
-def plugin_case(probe, freq, amp, grunt):
-    out = subprocess.run([probe, str(freq), str(amp), grunt], capture_output=True, text=True).stdout
+def plugin_case(probe, freq, amp, grunt, phys=0):
+    out = subprocess.run([probe, str(freq), str(amp), grunt, str(phys)], capture_output=True, text=True).stdout
     a = np.array([[float(x) for x in l.split()] for l in out.strip().splitlines()])
     return harmonics(a[:, 0], a[:, 1], freq)
 
@@ -45,6 +45,7 @@ def main():
     ap.add_argument("--probe", required=True)
     ap.add_argument("--freq", type=float, default=1000.0)
     ap.add_argument("--grunt", default="cut")
+    ap.add_argument("--phys", type=int, default=0, help="plugin clipPhysical mode (0 fitted, 1 simple model, 2 extended)")
     a = ap.parse_args()
     print(f"clipper input node sine at {a.freq:.0f} Hz, GRUNT={a.grunt}")
     print(f"{'in(V pk)':>9s} | {'':^34s} spice | {'':^34s} plugin")
@@ -52,7 +53,7 @@ def main():
           " | " + f"{'pp(V)':>7s} " + " ".join(f"{'H'+str(k):>6s}" for k in range(1, 8)))
     for amp in (0.01, 0.03, 0.1, 0.3, 1.0, 3.0):
         ms, pps = spice_case(a.freq, amp, a.grunt)
-        mp, ppp = plugin_case(a.probe, a.freq, amp, a.grunt)
+        mp, ppp = plugin_case(a.probe, a.freq, amp, a.grunt, a.phys)
         fmt = lambda m: " ".join(f"{20*np.log10(m[k]/m[0]+1e-30):6.1f}" if k else f"{20*np.log10(m[0]/amp):6.1f}"
                                  for k in range(7))
         print(f"{amp:9.3f} | {pps:7.3f} {fmt(ms)} | {ppp:7.3f} {fmt(mp)}")

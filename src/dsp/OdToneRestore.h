@@ -192,8 +192,14 @@ public:
         recompute();
     }
 
+    // Bypass = exact identity (FitParams::odEmpirical == 0, the "as drawn" configuration: this stage
+    // is explicitly NON-SCHEMATIC, so a schematic-faithful render must not run it).
+    void setBypass(bool b) noexcept { bypassed = b; }
+
     inline double process(double x) noexcept
     {
+        if (bypassed)
+            return x;
         x = notch.process(x);
         x = peak.process(x);
         return x;
@@ -211,6 +217,7 @@ public:
     static double mixShapeAt(double cf) noexcept { return mixShape(cf); }
 
 private:
+    bool bypassed = false;
     // ---- breakpoint tables (drive knob 0/.25/.5/.75/1.0) --------------------
     static constexpr double kX[5] = { 0.0, 0.25, 0.5, 0.75, 1.0 };
 

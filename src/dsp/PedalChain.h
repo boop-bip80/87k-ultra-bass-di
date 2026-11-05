@@ -326,6 +326,7 @@ public:
         fit = f;
 
         clipper.setNonlinear(f.clipA0, f.clipSatLo, f.clipSatHi, f.clipK);
+        clipper.setPhysicalVtc(f.clipPhysical, f.clipVcc, f.clipR19); // 0 = fitted sigmoid (shipped)
         // Session 123/124: ADAA mode, gated by OS factor. setNonlinear FIRST —
         // adaaExact() reads the hardness this call installs. The mode itself is
         // resolved in applyAdaaPolicy(), which BOTH this and prepareOd() call,
@@ -349,6 +350,8 @@ public:
             const auto z = jfet.getSourceZ();
             treble.setSourceZ(z.ro, z.rq2, z.rp, z.cp);
         }
+        treble.setActiveLoad(f.jfetQ2Gm > 0.0 ? 1.0 / f.jfetQ2Gm : 0.0,
+                             f.jfetQ2Gm > 0.0 ? f.jfetQ2Tau / f.jfetQ2Gm : 0.0);
         treble.setNotchDamp(f.trebleLadderDampR); // session-19: shallow the 322 Hz notch
         // ---- The two-pole ATTACK topology (session 62's proposal; defaults = the
         // drawn network exactly). ⚠ ORDER MATTERS: setNotchDamp() above writes all
@@ -404,7 +407,11 @@ public:
         odToneRestore.setDepthOffset(f.odNotchDepthDb);  // uniform extra cut (s172)
 
         // [ENG] level-dependent treble tilt — see OdDriveTilt.h before changing anything.
-        odDriveTilt.setEnabled(f.odTiltEnabled != 0);
+        odDriveTilt.setEnabled(f.odTiltEnabled != 0 && f.odEmpirical != 0);
+        odToneRestore.setBypass(f.odEmpirical == 0);
+        odToneShadow.setBypass(f.odEmpirical == 0);
+        odMakeup.setBypass(f.odEmpirical == 0);
+        odMakeupShadow.setBypass(f.odEmpirical == 0);
         odDriveTilt.setTime(f.odTiltTimeMs);
         odDriveTilt.setLaw(f.odTiltF0, f.odTiltS, f.odTiltDbPerDb, f.odTiltRefDbv,
                            f.odTiltMaxCutDb);
