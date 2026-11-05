@@ -539,6 +539,7 @@ public:
         double lo, hi;
         double w = wPrev; // warm start
         double f;
+        double fp;
         if (! diodeCurrentMode && (adaaMode == Adaa::Off || ! adaaExact()))
         {
             const double w0 = (gIn * x - ic - ieq14) / sum;
@@ -565,7 +566,12 @@ public:
             // than |F|/sum away, on the side F's sign indicates. Rigorous, needs
             // no tuning, and COSTS NOTHING — it is evaluated at the warm start,
             // so the F it needs is the F rtsafe was going to compute anyway.
-            f = solveF(w, x, ic);
+            // In diode mode, the node residual and its slope share the two
+            // Shockley exponentials. The legacy/ADAA-only mode is untouched.
+            if (diodeCurrentMode)
+                solveDiodeFAndFp(w, x, ic, f, fp);
+            else
+                f = solveF(w, x, ic);
             const double span = std::abs(f) / sum + 1e-12;
             if (f >= 0.0) { lo = w; hi = w + span; }
             else          { lo = w - span; hi = w; }
@@ -583,7 +589,8 @@ public:
         //       guard with only (a) was measured cycling for 16 iterations with
         //       the step still at half the bracket width.
         double dwOld = hi - lo, dw = dwOld;
-        double fp = solveFp(w);
+        if (! diodeCurrentMode)
+            fp = solveFp(w);
         // The exponentially steep diode-current branch needs more bisection
         // room than the fitted VTC; the default/legacy path still uses exactly
         // the measured 12-iteration limit.
@@ -605,8 +612,13 @@ public:
             }
             if (std::abs(dw) < 1e-12)
                 break;
-            f = solveF(w, x, ic);
-            fp = solveFp(w);
+            if (diodeCurrentMode)
+                solveDiodeFAndFp(w, x, ic, f, fp);
+            else
+            {
+                f = solveF(w, x, ic);
+                fp = solveFp(w);
+            }
             if (f > 0.0) lo = w; else hi = w; // F strictly decreasing
         }
 
@@ -691,30 +703,38 @@ private:
     // AND the solve converged (s120), re-run `analysis/alias_gate.py` before quoting
     // any of that table — both of its named causes have now moved.
 
-    // The node-W residual and its derivative, factored out so the solve, its bracket
-    // and any gate can share ONE definition (see the KCL derivation in the header).
+    // Legacy node-W residual and slope. The research-only diode mode uses the
+    // jointly evaluated current+slope version below, avoiding redundant exp().
     inline double solveF(double w, double x, double ic) const noexcept
     {
-        const double base = gIn * (x - w) - ic + gFb * (vtcSub(w) - w) - ieq14;
-        if (! diodeCurrentMode)
-            return base;
-        // D2 conducts from ground to W+Vm; D1 conducts from W+Vm to +Vrail.
-        const double lowExp = (-w - physicalTripPoint()) / diodeEmissionVoltageV;
-        const double highExp = (w + physicalTripPoint() - diodeRailV)
-                                / diodeEmissionVoltageV;
-        return base + diodeSaturationA * diodeExpm1Safe(lowExp)
-                    - diodeSaturationA * diodeExpm1Safe(highExp);
+        return gIn * (x - w) - ic + gFb * (vtcSub(w) - w) - ieq14;
     }
     inline double solveFp(double w) const noexcept
     {
-        const double base = -gIn + gFb * (vtcSubDeriv(w) - 1.0);
-        if (! diodeCurrentMode)
-            return base;
-        const double lowExp = (-w - physicalTripPoint()) / diodeEmissionVoltageV;
-        const double highExp = (w + physicalTripPoint() - diodeRailV)
-                                / diodeEmissionVoltageV;
-        return base - (diodeSaturationA / diodeEmissionVoltageV)
-                    * (diodeExpDerivSafe(lowExp) + diodeExpDerivSafe(highExp));
+        return -gIn + gFb * (vtcSubDeriv(w) - 1.0);
+    }
+
+    // Current-mode fast path: the same pair of expm1() calls provides both
+    // diode branch currents and their exact Newton slopes (expm1(z)+1=exp(z)).
+    // This halves the transcendental evaluations per Newton iteration without
+    // changing the strictly decreasing root equation. No allocations.
+    inline void solveDiodeFAndFp(double w, double x, double ic,
+                                 double& f, double& fp) const noexcept
+    {
+        const double y = vtcSub(w);
+        const double yp = vtcSubDeriv(w);
+        const double vm = physicalTripPoint();
+        const double low = (-w - vm) / diodeEmissionVoltageV;
+        const double high = (w + vm - diodeRailV) / diodeEmissionVoltageV;
+        const double lowerExpm1 = diodeExpm1Safe(low);
+        const double upperExpm1 = diodeExpm1Safe(high);
+        const double lowerSlope = low > 50.0 ? 0.0 : lowerExpm1 + 1.0;
+        const double upperSlope = high > 50.0 ? 0.0 : upperExpm1 + 1.0;
+        f = gIn * (x - w) - ic + gFb * (y - w) - ieq14
+            + diodeSaturationA * (lowerExpm1 - upperExpm1);
+        fp = -gIn + gFb * (yp - 1.0)
+             - (diodeSaturationA / diodeEmissionVoltageV)
+                * (lowerSlope + upperSlope);
     }
 
     // Overflow-safe continuation of exp(z)-1. Beyond z=50 the diode current
@@ -724,11 +744,6 @@ private:
     {
         return std::expm1(std::min(z, 50.0));
     }
-    static inline double diodeExpDerivSafe(double z) noexcept
-    {
-        return z > 50.0 ? 0.0 : std::exp(z);
-    }
-
     // ---- The substituted VTC and its derivative (session 123) ---------------
     // `vtcSub` IS `vtc` when ADAA is off or inexact, so the Off path stays
     // bit-identical: same expression, same order, one predictable branch.

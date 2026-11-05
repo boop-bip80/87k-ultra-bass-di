@@ -102,6 +102,8 @@ public:
     // 3-way mid switch: swap the series cap (see kLoMid*/kHiMid* above).
     void setSeriesCap(double c) noexcept
     {
+        if (! std::isfinite(c) || c < 0.0 || c > 0.01)
+            return;
         if (mna::differs(c, cSeries)) { cSeries = c; gc33 = cSeries * twoOverT; dirty = true; }
     }
 
@@ -123,7 +125,10 @@ public:
     // that Rw was introduced to force). See FitParams::midCapRatioLo.
     void setAcrossCap(double c) noexcept
     {
-        if (c > 0.0 && mna::differs(c, val.c32)) { val.c32 = c; gc32 = val.c32 * twoOverT; dirty = true; }
+        if (std::isfinite(c) && c > 0.0 && c <= 0.01 && mna::differs(c, val.c32))
+        {
+            val.c32 = c; gc32 = val.c32 * twoOverT; dirty = true;
+        }
     }
 
     // Range-limiting series resistance in the WIPER leg (Phase 9 GAP #4, session 22).
@@ -156,6 +161,8 @@ public:
     // caps are slightly over-corrected — an inherent, accepted trade (see FitParams).
     void setWiperR(double rOhm) noexcept
     {
+        if (! std::isfinite(rOhm) || rOhm > 1.0e9)
+            return;
         const double r = rOhm > 0.0 ? rOhm : 0.0;
         if (mna::differs(r, wiperR)) { wiperR = r; dirty = true; }
     }
@@ -178,7 +185,10 @@ public:
     }
     void setOpenLoopGain(double gain) noexcept
     {
-        if (std::isfinite(gain) && gain >= 1.0)
+        // Bounding the research gain avoids overflow in A*Vminus and A*sens
+        // before the rail limiter can act. This is a numerical validity range,
+        // NOT a measured TL07x gain or its frequency dependence.
+        if (std::isfinite(gain) && gain >= 1.0 && gain <= 1.0e9)
             opAmpGain = gain;
     }
 
@@ -205,6 +215,8 @@ public:
     // c31 <= 0 disables it and restores the exact 4-unknown expressions below.
     void setInputCap(double farads) noexcept
     {
+        if (! std::isfinite(farads) || farads > 0.01)
+            return;
         const double next = (farads > 0.0) ? farads : 0.0;
         if (mna::differs(next, cInput)) { cInput = next; dirty = true; }
         if (twoOverT > 0.0)

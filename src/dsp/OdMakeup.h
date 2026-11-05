@@ -284,6 +284,19 @@ private:
             ident = (gainDb == 0.0);
             if (ident)
                 return;
+            // The mix-keyed HF band normally sits at 5.6 kHz. A host can
+            // request 8 or 11.025 kHz, where that band is ABOVE Nyquist.
+            // RBJ's sin(w0) would then become negative: alpha<0 can put an
+            // IIR pole outside the unit circle and amplify silence into an
+            // unbounded output. There is no representable EQ band to place
+            // above Nyquist, so bypass only this section at those rates.
+            // At every supported rate with centreHz<fs/2 this is a bitwise
+            // no-op: the coefficient path is unchanged.
+            if (!(fsIn > 0.0) || !(centreHz < 0.5 * fsIn))
+            {
+                ident = true;
+                return;
+            }
             const double A = std::pow(10.0, gainDb / 40.0);
             const double w0 = 2.0 * M_PI * std::max(1.0, centreHz) / fsIn;
             const double alpha = std::sin(w0) / (2.0 * std::max(0.05, q));

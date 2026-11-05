@@ -43,6 +43,10 @@ PERTURBED = {
 }
 FREQUENCIES = (40.0, 100.0, 500.0, 717.0, 1000.0, 2000.0,
                4000.0, 8000.0, 12000.0)
+# Verified with actual ngspice-42: `ac lin 2` returns only one data row.
+# Use three points over a modest span and score the requested first point.
+AC_POINTS = 3
+AC_END_RATIO = 1.01
 
 
 def check_full_netlist_values() -> None:
@@ -91,8 +95,8 @@ def build_isolated_netlist(parts: dict[str, float], frequency: float, output: Pa
         ".control",
         "set noaskquit",
         "set wr_singlescale",
-        # AC range has two samples to avoid ngspice-specific 1-point AC behavior.
-        f"ac lin 2 {frequency:.15g} {frequency*1.000001:.15g}",
+        "option numdgt=15",
+        f"ac lin {AC_POINTS} {frequency:.15g} {frequency*AC_END_RATIO:.15g}",
         "let hre = real(v(skout) / v(vin))",
         "let him = imag(v(skout) / v(vin))",
         f"wrdata {output} hre him",
@@ -115,6 +119,34 @@ def analytic_transfer(p: dict[str, float], frequency: float) -> complex:
     return num / den / dsk
 
 
+def parse_ac_wrdata(text: str, frequency: float) -> complex:
+    """Read exactly the real(H)/imag(H) three-column `wr_singlescale` table."""
+    rows = []
+    for line in text.splitlines():
+        try:
+            nums = [float(value) for value in line.split()]
+        except ValueError:  # optional wrdata header
+            continue
+        if not nums:
+            continue
+        if len(nums) != 3:
+            raise RuntimeError(f"ngspice wrdata row has {len(nums)} columns, expected 3")
+        if not all(math.isfinite(value) for value in nums):
+            raise RuntimeError("ngspice wrdata contains nonfinite values")
+        if nums[0] <= 0.0:
+            raise RuntimeError("ngspice wrdata frequency must be positive")
+        rows.append((nums[0], complex(nums[1], nums[2])))
+    if len(rows) != AC_POINTS:
+        raise RuntimeError(f"unexpected ngspice wrdata format ({len(rows)} numeric rows)")
+    if any(rows[i][0] >= rows[i+1][0] for i in range(len(rows)-1)):
+        raise RuntimeError("ngspice wrdata frequencies not strictly increasing")
+    for i, (actual, _) in enumerate(rows):
+        expected = frequency*(1+(AC_END_RATIO-1)*i/(AC_POINTS-1))
+        if not math.isclose(actual, expected, rel_tol=3e-6):
+            raise RuntimeError(f"ngspice wrdata frequency {actual} != expected {expected}")
+    return rows[0][1]
+
+
 def spice_transfer(ngspice: str, parts: dict[str, float], frequency: float,
                    workdir: Path) -> complex:
     netlist = workdir / "coupled.cir"
@@ -127,17 +159,7 @@ def spice_transfer(ngspice: str, parts: dict[str, float], frequency: float,
     if result.returncode != 0 or not data.is_file():
         raise RuntimeError("ngspice did not produce coupled-stage AC data:\n"
                            + result.stdout[-1600:] + "\n" + result.stderr[-1600:])
-    rows = []
-    for line in data.read_text(encoding="utf-8").splitlines():
-        try:
-            nums = [float(value) for value in line.split()]
-        except ValueError:  # optional wrdata header
-            continue
-        if len(nums) >= 3:
-            rows.append((nums[0], complex(nums[-2], nums[-1])))
-    if len(rows) != 2:
-        raise RuntimeError(f"unexpected ngspice wrdata format ({len(rows)} numeric rows): {data.read_text()[:1200]}")
-    return min(rows, key=lambda row: abs(row[0] - frequency))[1]
+    return parse_ac_wrdata(data.read_text(encoding="utf-8"), frequency)
 
 
 def verify(ngspice: str) -> int:

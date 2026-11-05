@@ -166,3 +166,76 @@ private:
     InputBufferSourceLoadProbe(const InputBufferSourceLoadProbe&) = delete;
     InputBufferSourceLoadProbe& operator=(const InputBufferSourceLoadProbe&) = delete;
 };
+
+// =============================================================================
+// OFFLINE NOMINAL-IMPEDANCE WHAT-IF REFERENCE — NOT A B7K ULTRA NETLIST.
+// =============================================================================
+// Darkglass lists 1 MΩ nominal INPUT impedance for the B7K Ultra, whereas the
+// publicly drawn Black Mirror VII clone approaches 500 kΩ in the audio band.
+// The manufacturer does NOT publish the Ultra's frequency-dependent impedance
+// or input circuitry, so that single number cannot determine a unique R/C
+// network. Keep the clone network above untouched.
+//
+// This independent behavioral *reference* holds the input port at a constant
+// real impedance Znom while retaining the existing buffer's isolated C1/R2 HPF:
+//
+//   Hnom(s) = [Znom / (Rsource + Znom)] * [s R2 C1 / (1 + s R2 C1)]
+//
+// This is a valid sensitivity experiment: it answers how the known input
+// high-pass *would* respond if fed through a nominally resistive 1 MΩ port.
+// It does NOT assert that a real B7K Ultra has either this internal high-pass
+// or the (hypothetical) isolation between port loading and coupling filter.
+// Real pickup source impedances are reactive, not simply Rsource. Never place
+// this probe in the recorded plugin signal path: that could double-count
+// pickup loading already captured by an audio interface.
+class InputBufferNominalPortProbe
+{
+public:
+    static constexpr double kUltraPublishedNominalOhms = 1.0e6;
+
+    explicit InputBufferNominalPortProbe(
+        double sourceResistanceOhms = 0.0,
+        double nominalInputOhms = kUltraPublishedNominalOhms)
+        : sourceOhms(validateSource(sourceResistanceOhms)),
+          nominalOhms(validateNominal(nominalInputOhms))
+    {
+        // Ratio form avoids overflow in (sourceOhms + nominalOhms) for large
+        // but individually finite diagnostic impedances.
+        attenuation = sourceOhms <= nominalOhms
+            ? 1.0 / (1.0 + sourceOhms / nominalOhms)
+            : (nominalOhms / sourceOhms) / (1.0 + nominalOhms / sourceOhms);
+    }
+
+    void prepare(double sampleRate) { isolatedHpf.prepare(sampleRate); }
+    void reset() { isolatedHpf.reset(); }
+
+    inline double process(double openCircuitSourceVolts) noexcept
+    {
+        return isolatedHpf.process(openCircuitSourceVolts * attenuation);
+    }
+
+    double nominalInputImpedanceOhms() const noexcept { return nominalOhms; }
+    double sourceResistanceOhms() const noexcept { return sourceOhms; }
+    double sourceAttenuation() const noexcept { return attenuation; }
+
+private:
+    static double validateSource(double ohms)
+    {
+        if (!std::isfinite(ohms) || ohms < 0.0)
+            throw std::invalid_argument("Nominal port reference requires finite non-negative source resistance");
+        return ohms;
+    }
+    static double validateNominal(double ohms)
+    {
+        if (!std::isfinite(ohms) || ohms <= 0.0)
+            throw std::invalid_argument("Nominal port reference requires finite positive input impedance");
+        return ohms;
+    }
+
+    const double sourceOhms, nominalOhms;
+    double attenuation = 1.0;
+    InputBuffer isolatedHpf;
+
+    InputBufferNominalPortProbe(const InputBufferNominalPortProbe&) = delete;
+    InputBufferNominalPortProbe& operator=(const InputBufferNominalPortProbe&) = delete;
+};

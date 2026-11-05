@@ -117,6 +117,13 @@ target_link_libraries(SourceLoadingBoundaryTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(SourceLoadingBoundaryTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME SourceLoadingBoundaryTest COMMAND SourceLoadingBoundaryTest)
 
+# Offline comparison against the Ultra's published 1 MOhm nominal input, without
+# claiming a retail circuit drawing or changing the actual plugin input path.
+add_executable(UltraNominalPortReferenceTest tests/UltraNominalPortReferenceTest.cpp)
+target_link_libraries(UltraNominalPortReferenceTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(UltraNominalPortReferenceTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME UltraNominalPortReferenceTest COMMAND UltraNominalPortReferenceTest)
+
 add_executable(TrebleAttackTest tests/TrebleAttackTest.cpp)
 target_compile_options(TrebleAttackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME TrebleAttackTest COMMAND TrebleAttackTest)
@@ -136,6 +143,12 @@ add_test(NAME SallenKeyLPFTest COMMAND SallenKeyLPFTest)
 add_executable(LevelBlendTest tests/LevelBlendTest.cpp)
 target_compile_options(LevelBlendTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME LevelBlendTest COMMAND LevelBlendTest)
+
+# Bypass unrepresentable engineered HF peaking sections at low host rates,
+# preventing an unstable RBJ feedback coefficient when f_center >= Nyquist.
+add_executable(OdMakeupLowRateTest tests/OdMakeupLowRateTest.cpp)
+target_compile_options(OdMakeupLowRateTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME OdMakeupLowRateTest COMMAND OdMakeupLowRateTest)
 
 add_executable(OdDriveTiltTest tests/OdDriveTiltTest.cpp)
 target_compile_options(OdDriveTiltTest PRIVATE ${PEDAL_WARNING_FLAGS})
@@ -158,6 +171,10 @@ add_executable(BaxandallRailFeedbackTest tests/BaxandallRailFeedbackTest.cpp)
 target_compile_options(BaxandallRailFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME BaxandallRailFeedbackTest COMMAND BaxandallRailFeedbackTest)
 
+add_executable(RailEdgeFuzzTest tests/RailEdgeFuzzTest.cpp)
+target_compile_options(RailEdgeFuzzTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME RailEdgeFuzzTest COMMAND RailEdgeFuzzTest)
+
 add_executable(EqPreGainTest tests/EqPreGainTest.cpp)
 target_compile_options(EqPreGainTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME EqPreGainTest COMMAND EqPreGainTest)
@@ -173,6 +190,18 @@ add_test(NAME JfetStageTest COMMAND JfetStageTest)
 add_executable(JfetPhysicalFeedbackTest tests/JfetPhysicalFeedbackTest.cpp)
 target_compile_options(JfetPhysicalFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME JfetPhysicalFeedbackTest COMMAND JfetPhysicalFeedbackTest)
+
+# Experimental coupled J201 Q1 source/drain port and loaded Q2/ATTACK network.
+# Requires explicit caller opt-in; shipped PedalChain remains unchanged.
+add_executable(JfetTrebleCoupledTest tests/JfetTrebleCoupledTest.cpp)
+target_compile_options(JfetTrebleCoupledTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetTrebleCoupledTest COMMAND JfetTrebleCoupledTest)
+
+# Extreme finite-signal/source-history stress for the coupled nonlinear root.
+# Intentionally not an assertion about attainable pedal rails or musical tone.
+add_executable(JfetTrebleCoupledStressTest tests/JfetTrebleCoupledStressTest.cpp)
+target_compile_options(JfetTrebleCoupledStressTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetTrebleCoupledStressTest COMMAND JfetTrebleCoupledStressTest)
 
 # The only test that ENABLES the rail clamp — every stage test runs it off (the
 # default) against a linear oracle, which is how the signed-railNeg DC bug
@@ -202,6 +231,19 @@ add_test(NAME ClipperDiodeAdversarialTest COMMAND ClipperDiodeAdversarialTest)
 add_executable(ClipperDiodePhysicalAdversarialTest tests/ClipperDiodePhysicalAdversarialTest.cpp)
 target_compile_options(ClipperDiodePhysicalAdversarialTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ClipperDiodePhysicalAdversarialTest COMMAND ClipperDiodePhysicalAdversarialTest)
+
+add_executable(ClipperDiodeRealtimeTest tests/ClipperDiodeRealtimeTest.cpp)
+target_compile_options(ClipperDiodeRealtimeTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ClipperDiodeRealtimeTest COMMAND ClipperDiodeRealtimeTest)
+
+# Manual benchmark, not an acceptance gate (CI runner CPU speed is variable).
+add_executable(ClipperDiodePerf tests/ClipperDiodePerf.cpp)
+target_compile_options(ClipperDiodePerf PRIVATE ${PEDAL_WARNING_FLAGS})
+
+# Research-only circuit solver real-time allocation / finite-state regression.
+add_executable(ExperimentalRealtimeTest tests/ExperimentalRealtimeTest.cpp)
+target_compile_options(ExperimentalRealtimeTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ExperimentalRealtimeTest COMMAND ExperimentalRealtimeTest)
 
 # Validates the *generic* CD4049 inverter's KCL/supply-drop solve, self-bias
 # and interpolation independently of any claims about a retail Ultra PCB.
@@ -243,6 +285,12 @@ target_link_libraries(ModelSwitchTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(ModelSwitchTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ModelSwitchTest COMMAND ModelSwitchTest)
 
+# Explicit research-mode A/B is normally OFF, never a measured retail claim.
+add_executable(CircuitResearchModesTest tests/CircuitResearchModesTest.cpp)
+target_link_libraries(CircuitResearchModesTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(CircuitResearchModesTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME CircuitResearchModesTest COMMAND CircuitResearchModesTest)
+
 add_executable(FinalSweepTest tests/FinalSweepTest.cpp)
 target_link_libraries(FinalSweepTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(FinalSweepTest PRIVATE ${PEDAL_WARNING_FLAGS})
@@ -259,7 +307,8 @@ add_test(NAME SwitchTransitionTest COMMAND SwitchTransitionTest)
 # Phase-7 calibration harness: render a WAV through the real chain from the CLI.
 # Mirrors PluginProcessor::processBlock (see the header comment in the source);
 # needs juce_audio_formats for 32-bit-float WAV I/O and juce_dsp for the
-# oversampler. NOT registered with add_test() — it's a tool, not a pass/fail gate.
+# oversampler. Audio rendering itself is not a pass/fail gate; the argument
+# parser does have a no-audio smoke test below when Python is installed.
 juce_add_console_app(OfflineRender)
 target_sources(OfflineRender PRIVATE analysis/offline_render.cpp)
 target_link_libraries(OfflineRender
@@ -272,6 +321,18 @@ target_link_libraries(OfflineRender
         juce::juce_recommended_config_flags)
 target_compile_definitions(OfflineRender PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_compile_options(OfflineRender PRIVATE ${PEDAL_WARNING_FLAGS})
+
+# Run the actual built OfflineRender CLI on CI without an input WAV. The smoke
+# test only verifies opt-in parser/reporting semantics, not hardware parity.
+# Python is optional in native developer builds.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME OfflineResearchCliSmoke
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/analysis/test_offline_research_cli.py"
+                "$<TARGET_FILE:OfflineRender>")
+    set_tests_properties(OfflineResearchCliSmoke PROPERTIES TIMEOUT 30)
+endif()
 
 # Oversampling + delay-comp validation (needs JUCE dsp + FFT)
 juce_add_console_app(OSValidationTest)

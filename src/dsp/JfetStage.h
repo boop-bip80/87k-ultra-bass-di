@@ -278,11 +278,15 @@ public:
         physicalPinch = (vto < -1.0e-6) ? -vto : 1.0e-6;
         updatePhysicalBias();
         ieqC3Physical = physicalSourceVolts = 0.0;
+        coupledLastCurrent = coupledDrainVolts = 0.0;
+        coupledIterations = 0;
     }
 
     double probePhysicalSourceVoltage() const noexcept { return physicalSourceVolts; }
     double probePhysicalBiasCurrent() const noexcept { return physicalIdq; }
     double probePhysicalOverdriveVoltage() const noexcept { return physicalVov; }
+    double probeCoupledDrainVoltage() const noexcept { return coupledDrainVolts; }
+    int probeCoupledIterations() const noexcept { return coupledIterations; }
 
     // Phase-7 capture fit (FitParams.h). gm sets the shelf POLE (via gm*R6) as
     // well as the gain, so changing it must re-derive the shelf coefficients —
@@ -326,6 +330,9 @@ public:
         shelfX1 = shelfY1 = 0.0;
         uPrev = 0.0;
         ieqC3Physical = physicalSourceVolts = 0.0;
+        coupledDrainVolts = 0.0;
+        coupledLastCurrent = 0.0;
+        coupledIterations = 0;
     }
 
     // 1st-order ADAA on the waveshaper (dsp.md "ADAA"). Off by default so the
@@ -361,6 +368,102 @@ public:
         const double y = adaa ? adaaShape(vgs, uPrev) : waveshape(vgs);
         uPrev = vgs;
         return -gm * y;
+    }
+
+    // Research-only coupled-Q1 path. The caller obtains the CURRENT-SAMPLE
+    // Thevenin port from TrebleAttack::previewCoupledDrainPort() BEFORE either
+    // stage advances. TrebleAttack must exclude its old linearized Q1 ro/Rp/Cp
+    // branch; this source solver itself includes gds=1/ro and R6/C3 dynamics.
+    //
+    // KCL source: (1/R6+gc3)*vs-ieqC3 = Id.
+    // KCL drain : vd = openCircuit - Rth*Id.
+    // Model      : Id = beta*(max(Vov+vg-vs,0)^2 - Vov^2)
+    //                   + gds*(vd-vs).
+    // Eliminating vs,vd leaves ONE strictly increasing root in Id. This model
+    // does NOT handle J201's drain triode-region compliance, Q2 nonlinear
+    // saturation, thermal effects or retail values. Never the shipped default.
+    inline double processCoupled(double x, double drainOpenCircuitVolts,
+                                 double drainTheveninOhms) noexcept
+    {
+        if (!physicalSourceFeedback
+            || !std::isfinite(drainOpenCircuitVolts)
+            || !std::isfinite(drainTheveninOhms)
+            || drainTheveninOhms <= 0.0
+            || !std::isfinite(ro) || ro <= 0.0)
+            return process(x); // preserve ordinary API on an invalid request
+
+        // Same physical gate coupling and C2 trapezoid as process(), once.
+        const double vx = (gc2 * x - ieqC2) / (gc2 + gRin);
+        ieqC2 = 2.0 * gc2 * (x - vx) - ieqC2;
+        const double vg = kDiv * vx;
+
+        const double gBase = 1.0 / kR6 + gc3Physical;
+        const double oldHistory = ieqC3Physical;
+        const double gds = 1.0 / ro;
+        const auto residual = [&](double id) noexcept {
+            const double vs = (id + oldHistory) / gBase;
+            const double vd = drainOpenCircuitVolts - drainTheveninOhms * id;
+            return id - physicalCurrent(vg, vs) - gds * (vd - vs);
+        };
+        // dF/dId >= 1. From the prior current, the unique root lies no
+        // farther than |F(anchor)| away on the indicated side. Safeguarded
+        // Newton normally converges in a handful of steps; if a step leaves
+        // the proven bracket, take a bisection instead (real-time bounded).
+        // An extreme out-of-audio-range transient may need >24 Newton steps
+        // because the piecewise square-law curvature becomes very large.
+        // Keep the fast 24-step budget and finish with a guaranteed 64-step
+        // bisection only on exhaustion. Both paths honor the same bracket.
+        const double anchor = coupledLastCurrent;
+        const double atAnchor = residual(anchor);
+        double lo = std::min(anchor, anchor - atAnchor);
+        double hi = std::max(anchor, anchor - atAnchor);
+        double id = anchor;
+        coupledIterations = 0;
+        for (int it = 0; it < 24; ++it)
+        {
+            const double f = residual(id);
+            ++coupledIterations;
+            if (std::abs(f) < 1.0e-16 || hi - lo < 1.0e-15)
+                break;
+            if (f > 0.0) hi = id;
+            else lo = id;
+            const double vs = (id + oldHistory) / gBase;
+            const double overdrive = std::max(0.0, physicalVov + vg - vs);
+            const double derivative = 1.0 + 2.0 * physicalBeta * overdrive / gBase
+                                      + gds * (drainTheveninOhms + 1.0 / gBase);
+            const double candidate = id - f / derivative;
+            if (std::isfinite(candidate) && candidate > lo && candidate < hi)
+                id = candidate;
+            else
+                id = lo + 0.5 * (hi - lo);
+        }
+        if (coupledIterations == 24)
+        {
+            // The 24th Newton update has not yet been checked. Enforce the
+            // bracket before bisecting; otherwise a very large, finite input
+            // (e.g. tens of volts) can return with non-negligible KCL error.
+            for (int it = 0; it < 64; ++it)
+            {
+                const double f = residual(id);
+                ++coupledIterations;
+                if (std::abs(f) < 1.0e-16)
+                    break;
+                if (f > 0.0) hi = id;
+                else lo = id;
+                const double mid = lo + 0.5 * (hi - lo);
+                if (mid == id || mid == lo || mid == hi)
+                {
+                    id = mid;
+                    break; // floating-point bracket cannot shrink further
+                }
+                id = mid;
+            }
+        }
+        coupledLastCurrent = id;
+        physicalSourceVolts = (id + oldHistory) / gBase;
+        ieqC3Physical = 2.0 * gc3Physical * physicalSourceVolts - oldHistory;
+        coupledDrainVolts = drainOpenCircuitVolts - drainTheveninOhms * id;
+        return -id;
     }
 
 private:
@@ -649,6 +752,9 @@ private:
     double physicalVov = 0.0, physicalIdq = 0.0;
     double gc3Physical = kC3 * 2.0 * 48000.0;
     double ieqC3Physical = 0.0, physicalSourceVolts = 0.0;
+    double coupledDrainVolts = 0.0;
+    double coupledLastCurrent = 0.0;
+    int coupledIterations = 0;
 
     // JUCE-free (compiled into pure console tests).
     JfetStage(const JfetStage&) = delete;

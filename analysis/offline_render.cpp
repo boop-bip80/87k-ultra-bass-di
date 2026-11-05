@@ -96,6 +96,9 @@ struct Options
     bool trimLatency = false;
     bool printFit = false;
     bool schematic = false; // start from FitParams::schematic() (every fit put back to its drawn value)
+    // Engineering A/B only. All flags default OFF, are absent from the retail
+    // emulation's plugin APVTS, and require independent hardware calibration.
+    PedalChain::ResearchModes research {};
 
     FitParams fit {};
 };
@@ -465,6 +468,9 @@ static void printUsage()
         "  --schematic           baseline = FitParams::schematic() (every fit put back to its drawn\n"
         "                        value, empirical OD correction stages bypassed); --fit applies on top\n"
         "  --fit name=value      repeatable; any FitParams field (see --print-fit)\n"
+        "  --research <name>     repeatable opt-in circuit experiment: all, clipper-diodes,\n"
+        "                        jfet-gds, jfet-source, bax-rails, mid-rails, none\n"
+        "                        NOT a measured/verified B7K Ultra model; all OFF by default\n"
         "  --print-fit           dump the fit params + resolved knob mapping used\n"
         "  --trim-latency        opt-in; do NOT use with analyze.py::align()\n");
 }
@@ -509,6 +515,26 @@ static Options parseArgs(int argc, char** argv)
         else if (a == "--os") o.osFactor = parseInt(a, value());
         else if (a == "--block") o.blockSize = parseInt(a, value());
         else if (a == "--schematic") o.schematic = true;
+        else if (a == "--research")
+        {
+            const std::string name = lower(value());
+            if (name == "all")
+            {
+                o.research.clipperDiodeCurrents = true;
+                o.research.jfetFiniteDrainConductance = true;
+                o.research.jfetNonlinearSourceFeedback = true;
+                o.research.baxandallRailFeedback = true;
+                o.research.midBandRailFeedback = true;
+            }
+            else if (name == "none")
+                o.research = {};
+            else if (name == "clipper-diodes") o.research.clipperDiodeCurrents = true;
+            else if (name == "jfet-gds") o.research.jfetFiniteDrainConductance = true;
+            else if (name == "jfet-source") o.research.jfetNonlinearSourceFeedback = true;
+            else if (name == "bax-rails") o.research.baxandallRailFeedback = true;
+            else if (name == "mid-rails") o.research.midBandRailFeedback = true;
+            else fail("--research: unknown model '" + name + "' (see --help)");
+        }
         else if (a == "--fit") fitAssignments.push_back(value());
         else if (a == "--print-fit") o.printFit = true;
         else if (a == "--trim-latency") o.trimLatency = true;
@@ -573,6 +599,14 @@ static void printFitReport(const Options& o, const PedalChain::Params& p, int la
     std::printf("output_makeup=%.9g\n", o.outputMakeup);
     std::printf("input_trim_db=%.9g\noutput_trim_db=%.9g\n", o.inputTrimDb, o.outputTrimDb);
     std::printf("bypass=%d\ndist_engage=%d\n", o.bypass ? 1 : 0, o.distEngage ? 1 : 0);
+    std::printf("research.clipper_diodes=%d\nresearch.jfet_gds=%d\n"
+                "research.jfet_source=%d\nresearch.bax_rails=%d\n"
+                "research.mid_rails=%d\n",
+                o.research.clipperDiodeCurrents ? 1 : 0,
+                o.research.jfetFiniteDrainConductance ? 1 : 0,
+                o.research.jfetNonlinearSourceFeedback ? 1 : 0,
+                o.research.baxandallRailFeedback ? 1 : 0,
+                o.research.midBandRailFeedback ? 1 : 0);
 
     // Knob space (what the CLI took, == APVTS) vs DSP space (what the chain got).
     // The EQ rows must differ by the 1-x inversion; that is the visible proof
@@ -652,6 +686,7 @@ int main(int argc, char** argv)
         d->prepare(sampleRate, blockSize);
         d->setFactorOrder(osOrder);
         d->setFitParams(o.fit); // calibration first, then control
+        d->setResearchModes(o.research); // all default OFF; explicit engineering opt-in
         d->setParams(params);
         d->reset();
         dsp.push_back(std::move(d));

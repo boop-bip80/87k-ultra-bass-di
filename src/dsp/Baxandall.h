@@ -149,8 +149,12 @@ public:
     // would leave a frequency-dependent shape residual. ** See FitParams.
     void setTrebleWiperR(double rOhm) noexcept
     {
-        const double r = rOhm > 0.0 ? rOhm : 0.0;
-        if (mna::differs(r, r36)) { r36 = r; dirty = true; }
+        // R36 is an actual nonzero series resistor. A requested short makes
+        // the existing 7/8-node stamp divide by zero; infinity/NaN likewise
+        // cannot represent a real fitted part. Keep the last valid value.
+        if (! std::isfinite(rOhm) || rOhm < 1.0 || rOhm > 1.0e9)
+            return;
+        if (mna::differs(rOhm, r36)) { r36 = rOhm; dirty = true; }
     }
 
     // C21 — the 100n (drawn) IC5_B -> stack-input coupling cap, solved INSIDE the stack as an
@@ -159,6 +163,10 @@ public:
     // i.e. the legacy PedalChain::C21Highpass path). Takes effect on the next rebuild.
     void setInputCap(double farads) noexcept
     {
+        // Accept <=0 as the documented bypass, but reject non-finite or
+        // absurdly large capacitances before forming the companion stamp.
+        if (! std::isfinite(farads) || farads > 0.01)
+            return;
         const double c = farads > 0.0 ? farads : 0.0;
         if (mna::differs(c, c21))
         {

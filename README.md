@@ -46,8 +46,31 @@ J201 R6/C3 source feedback and finite drain conductance, and rail-aware
 passive-capacitor feedback in both mid-band and Baxandall EQ networks. Independent
 stateful circuit oracles and legacy bit-exact tests are registered in CTest.
 These options are engineering research APIs, **not** validated retail-pedal
-settings or currently exposed plugin parameters. See [Round 5 circuit evidence](docs/round5-circuit-evidence.md)
+settings or currently exposed plugin parameters. The
+[offline research A/B router](docs/research-mode-a-b.md) can now opt into them
+one at a time in the development renderer while keeping the plugin defaults
+unchanged. See [Round 5 circuit evidence](docs/round5-circuit-evidence.md)
 and the [JFET derivation](docs/round5-jfet-source-feedback.md).
+
+**Round 6 reproducibility and solver audit:** the offline renderer can now
+activate five research-only circuit switches using explicit `--research` flags,
+with every switch **OFF in the shipping plugin**. Independent full-chain
+regression matched 180,000 legacy output samples bit-for-bit. New safeguards
+cover Baxandall zero-resistance parameter fuzzing and stress-test the iterative
+diode model without audio-thread allocations. A pre-existing unstable
+out-of-Nyquist 5.6 kHz HF peaking section is now bypassed only at low host
+rates, avoiding 8/11.025 kHz runaway without changing the normal-rate path.
+An offline
+[1 MΩ Ultra specification probe](docs/ultra-nominal-input-port.md) contrasts the
+clone's 500 kΩ input load; it does **not** invent a retail input schematic.
+Separate tests and documentation cover [JFET/treble coupled-port experiments](docs/round6-jfet-treble-coupling.md),
+[unmeasured device-parameter sensitivity](docs/round6-assumption-sensitivity.md),
+[rail-boundary checks](docs/round6-rail-edge-audit.md), and an
+[independent J201 SPICE reference](docs/round6-spice-source.md).
+Coupled drain-port experiments are **not wired into the production chain**;
+Q1 drain compliance and nonlinear Q2 behavior are still not modeled or
+measured. The new source SPICE job is advisory until a real CI run is assessed.
+None of these additions establishes retail Ultra circuitry or audio parity.
 
 ![Obsidian B7000 plugin UI](image.png)
 

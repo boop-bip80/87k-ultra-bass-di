@@ -83,6 +83,17 @@ public:
     // OS-factor change because prepareOd() re-prepares from those same values.
     void setFitParams(const FitParams& f) { chain.setFitParams(f); }
     const FitParams& getFitParams() const noexcept { return chain.getFitParams(); }
+    // Offline/engineering A/B only: not exposed as APVTS parameters and OFF by
+    // default. Reconfigure before processing; the physical source solver's
+    // capacitor state is reset when switching modes.
+    void setResearchModes(const PedalChain::ResearchModes& m) noexcept
+    {
+        chain.setResearchModes(m);
+    }
+    PedalChain::ResearchModes getResearchModes() const noexcept
+    {
+        return chain.getResearchModes();
+    }
     void primePhysicalTables() { chain.primePhysicalTables(); } // prepare-time only (see PedalChain)
 
     // Choose the oversampling factor for this block (order = log2 factor, 0..3).

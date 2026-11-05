@@ -121,7 +121,51 @@ public:
         bool distEngage = true;
     };
 
+    // Explicit research-only physics switches. None is a verified setting for
+    // any retail Darkglass revision, and all default to OFF. This interface
+    // exists so an offline A/B can exercise the KCL solvers that otherwise sit
+    // behind stage-local APIs without silently changing the shipped sound.
+    struct ResearchModes
+    {
+        bool clipperDiodeCurrents = false;      // assumed 1N4148 Is/nVT and +9 V
+        bool jfetFiniteDrainConductance = false;
+        bool jfetNonlinearSourceFeedback = false; // assumed J201 beta/VTO
+        bool baxandallRailFeedback = false;
+        bool midBandRailFeedback = false;
+    };
+
     PedalChain() = default;
+
+    // Call at preparation/configuration time, not while processing audio. In
+    // particular the nonlinear JFET option resets its C3 companion history;
+    // a live model flip would require its own crossfade and is not provided.
+    // Re-applying unchanged settings is inert (including state continuity).
+    void setResearchModes(const ResearchModes& next) noexcept
+    {
+        if (next.clipperDiodeCurrents != clipper.diodeCurrentModelEnabled())
+            clipper.setDiodeCurrentModel(next.clipperDiodeCurrents);
+        if (next.jfetFiniteDrainConductance != researchModes.jfetFiniteDrainConductance)
+        {
+            jfet.setExactFiniteDrainConductance(next.jfetFiniteDrainConductance);
+            // Changing finite gds changes the THEVENIN source impedance that
+            // TrebleAttack stamps into its physical 8x8 nodal matrix. Without
+            // this restamp the local JFET would use new gm while the receiving
+            // ladder would silently retain the previous ro/Rp source law.
+            const auto z = jfet.getSourceZ();
+            treble.setSourceZ(z.ro, z.rq2, z.rp, z.cp);
+        }
+        if (next.jfetNonlinearSourceFeedback != researchModes.jfetNonlinearSourceFeedback)
+            jfet.setPhysicalSourceFeedbackModel(next.jfetNonlinearSourceFeedback);
+        if (next.baxandallRailFeedback != researchModes.baxandallRailFeedback)
+            baxandall.setRailAwarePassiveFeedback(next.baxandallRailFeedback);
+        if (next.midBandRailFeedback != researchModes.midBandRailFeedback)
+        {
+            loMid.setRailAwarePassiveFeedback(next.midBandRailFeedback);
+            hiMid.setRailAwarePassiveFeedback(next.midBandRailFeedback);
+        }
+        researchModes = next;
+    }
+    ResearchModes getResearchModes() const noexcept { return researchModes; }
 
     // baseRate = host sample rate; osRate = oversampled rate for the nonlinear
     // region (== baseRate for a 1× / no-oversampling run).
@@ -953,6 +997,7 @@ private:
     bool paramsApplied = false;
 
     Params cur;
+    ResearchModes researchModes;
     // Phase-7 capture-fit calibration (FitParams.h). Every stage that owns a fit
     // constant keeps its own copy; this is the authoritative set applied to them,
     // retained so getFitParams() can report what a render actually ran with.

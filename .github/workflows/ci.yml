@@ -35,6 +35,13 @@ jobs:
       - name: Verify coupled clone circuit against real ngspice AC analysis
         run: python analysis/spice_reference/verify_coupled_stage.py
 
+      # New, independent J201 source-branch diagnostic. Run it on CI so its
+      # ngspice behavior is observable, but keep it advisory until a real
+      # runner confirms the primitive's AC output/table format and thresholds.
+      - name: Diagnose clone J201 source feedback with native ngspice (advisory)
+        continue-on-error: true
+        run: python analysis/spice_reference/verify_jfet_source.py
+
   build-and-test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

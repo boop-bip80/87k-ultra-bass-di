@@ -358,6 +358,67 @@ public:
             rebuild();
     }
 
+    // EXPERIMENTAL Q1 nonlinear drain-port coupling (disabled by default).
+    // The existing ro + (Rp || Cp) branch already embeds LINEARIZED Q1 source
+    // feedback; keeping it while coupling a nonlinear Q1 three-terminal model
+    // would double-count gds and C3. Exclude ONLY that Q1 branch, retaining the
+    // independently stamped Q2 active-load, bootstrap and full ATTACK network.
+    void setCoupledJfetDrainPort(bool enabled)
+    {
+        if (coupledJfetDrainPort == enabled)
+            return;
+        coupledJfetDrainPort = enabled;
+        ieqCp = 0.0; // capacitor from the removed Q1 equivalent is inapplicable
+        if (prepared)
+            rebuild();
+    }
+    bool coupledJfetDrainPortEnabled() const noexcept { return coupledJfetDrainPort; }
+
+    struct DrainPort
+    {
+        double openCircuitVolts; // drain V with Q1 incremental current = 0
+        double theveninOhms;     // dVdrain/d(I injected at G), positive
+    };
+
+    // Stateless, sample-synchronous affine port of the complete passive
+    // treble/Q2 network. Must be called BEFORE process() for this sample; it
+    // observes the same capacitor/inductor Norton histories but advances none.
+    // Since only b[G] depends on Q1 current, Vg(i)=open + Rth*i EXACTLY.
+    // Requires setCoupledJfetDrainPort(true) and prepare().
+    DrainPort previewCoupledDrainPort() const noexcept
+    {
+        if (!prepared || !coupledJfetDrainPort)
+            return {0.0, 0.0};
+        const size_t pos = static_cast<size_t>(attack);
+        const double eq5 = ieqC5 * c5damp[pos];
+        std::array<double, N> b {};
+        b[G] = eq5;
+        if (q2GateCapEnabled)
+            b[G] += ieqC4 * c4damp;
+        b[H] = 0.0; // the disconnected linearized-Q1 branch has no history
+        b[M] = -ieqC6;
+        b[P] = ieqC7;
+        b[L1] = -eq5 + ieqC9;
+        b[L2] = -ieqC9 + ieqC6;
+        b[Q] = -ieqC7;
+        b[J] = -ihL;
+        if (attack == Attack::Boost)
+        {
+            b[M] += ieqC8;
+            b[P] -= ieqC8;
+        }
+        else if (attack == Attack::Cut)
+            b[P] += ieqC8;
+
+        const auto& row = yInv[pos][G];
+        double vOpen = 0.0;
+        for (size_t j = 0; j < N; ++j)
+            vOpen += row[j] * b[j];
+        return {vOpen, row[G]};
+    }
+
+    double probeLastDrainVoltage() const noexcept { return lastDrainVolts; }
+
     // ---- Q2 ACTIVE LOAD (the bootstrapped J201 load), added 2026-11 -----------------------
     // Q2's gate sits on the R9||R10 bias node (~500k to AC ground) and C4 (22n) couples its source
     // — the stage's output node G — to that gate. Small-signal, Q2 therefore presents an
@@ -404,6 +465,7 @@ public:
         ieqC5 = ieqC9 = ieqC6 = ieqC7 = ieqC8 = ieqCp = 0.0;
         ihL = 0.0;
         ieqC4 = 0.0;
+        lastDrainVolts = 0.0;
     }
 
     void setAttack(Attack a) noexcept
@@ -470,6 +532,7 @@ public:
                 acc += A[i][j] * b[j];
             v[i] = acc;
         }
+        lastDrainVolts = v[G];
 
         // ---- Update capacitor states: Ieq_new = 2*gc*v_ab - Ieq_old ----
         // C5 lossy: the CAP voltage is the branch voltage minus the Rd drop.
@@ -510,7 +573,7 @@ private:
 
     void rebuild()
     {
-        gcp = srcZ[3] * twoOverT;
+        gcp = coupledJfetDrainPort ? 0.0 : srcZ[3] * twoOverT;
         // Lossy-C5 (notch damping): series Rd + C5 -> single Norton branch, per
         // ATTACK position (pole B). Rd=0 => c5damp=1 => g5eff=gc5 => exact ideal
         // (undamped) behaviour.
@@ -551,13 +614,19 @@ private:
         const size_t pi = static_cast<size_t>(pos);
         Mat Y {};
         // ---- J201 drain output network (see header) ----
-        const double gro = 1.0 / srcZ[0], gRq2 = 1.0 / srcZ[1], gRp = 1.0 / srcZ[2];
-        Y[G][G] += gro; Y[G][H] -= gro; Y[H][G] -= gro; Y[H][H] += gro; // ro (G-H)
+        const double gRq2 = 1.0 / srcZ[1];
+        if (!coupledJfetDrainPort)
+        {
+            const double gro = 1.0 / srcZ[0], gRp = 1.0 / srcZ[2];
+            Y[G][G] += gro; Y[G][H] -= gro; Y[H][G] -= gro; Y[H][H] += gro; // ro (G-H)
+            Y[H][H] += gRp;                               // Rp  (H-GND)
+            Y[H][H] += gcp;                               // Cp  (H-GND)
+        }
+        else
+            Y[H][H] = 1.0; // disconnected auxiliary node; nonsingular
         Y[G][G] += gRq2;                                  // Rq2 (G-GND)
         if (q2GateCapEnabled)
             Y[G][G] += g4eff; // Q2 bootstrap C4 -> gate bias R9||R10 -> AC ground
-        Y[H][H] += gRp;                                   // Rp  (H-GND)
-        Y[H][H] += gcp;                                   // Cp  (H-GND)
         // ---- Q2 active load: G --R2-- J --L-- GND (J isolated with 1 S to GND when disabled) ----
         if (qL2 > 0.0)
         {
@@ -642,6 +711,8 @@ private:
     double twoOverT = 2.0 * 48000.0;
     // Companion conductances (set in prepare()/rebuild()).
     double gc9 = 0.0, gc6 = 0.0, gc7 = 0.0, gc8 = 0.0, gcp = 0.0;
+    bool coupledJfetDrainPort = false;
+    double lastDrainVolts = 0.0;
     // ---- The SHARED ladder (NOT switched by ATTACK) — see setLadder. Defaults are
     // the drawn values, so a default-constructed stage is the pre-session-64 stage.
     double r7 = kR7, r12 = kR12, r14 = kR14, c9 = kC9, c6 = kC6;

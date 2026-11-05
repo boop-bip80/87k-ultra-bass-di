@@ -84,7 +84,7 @@ int main()
         {1e-3, .25, 3.157}, {1e-3, .25, 9.0},
     };
     for (const DiodeParams p : parameters)
-    for (const double fs : {44100.,48000.,96000.,192000.})
+    for (const double fs : {44100.,48000.,96000.,192000.,384000.})
         for (int m=0;m<3;++m)
             for (const int gruntMode : {0,1,2})
             {
