@@ -115,8 +115,9 @@ shape, swept THD, per-order harmonics, and null depth.
   errors were found (C21 fixed-R, J201 Q2 bootstrap, bridged-T loading); the last two are opt-in because the
   shipped fit sits on top of the old structure and has not been re-fitted. **Re-fitting the 17-value ladder,
   C7 and `jfetGm` on the corrected structure needs the captures and is the obvious next step.**
-- The J201 large-signal shaper still uses fitted constants even in schematic mode (clipping onset differs
-  from ngspice by ~20 dB in H3 around −30 dBFS).
+- The J201 large-signal shaper still uses fitted constants even in schematic mode. End-to-end vs ngspice
+  (same MOSFET model) H1/H3 track to ~1 dB, but even-order content at heavy drive does not (H2 up to ~6 dB
+  high at −6 dBFS). The simple vs extended two-MOSFET CD4049 models also differ by ~20 dB in low-level H3.
 - The overdrive path reads quiet relative to the reference validation target, worst at GRUNT
   flat/boost. A clipper-headroom fix was investigated and found not to fit inside the pedal's own
   9 V supply rail — this is now understood to be a structural limit, not open work.

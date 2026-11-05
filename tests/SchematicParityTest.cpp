@@ -179,6 +179,53 @@ int main()
         }
     }
 
+    // ---- 3b. end-to-end large signal (the whole OD chain incl. the J201 shaper, rails and bridged-T) --------
+    // The plugin must use the SIMPLE two-MOSFET model here (clipPhysical = 1): that is the device model
+    // ngspice runs. (The schematic() default is the paper's extended model, whose low-level H3 is ~20 dB
+    // lower — a difference between two published models of the CHIP, not an error of either implementation.)
+    {
+        PedalChain big;
+        big.prepare(fs, fs);
+        FitParams fp = FitParams::schematic();
+        fp.clipPhysical = 1;
+        big.setFitParams(fp);
+        big.applyParams(paramsFor(.5, .5, .5, .5, 1.0, 0.5, 1));
+        double worstH1 = 0.0, worstH3 = 0.0;
+        int caseIdx = -1;
+        for (const auto& c : schematic_ref::chain)
+        {
+            ++caseIdx;
+            big.reset();
+            const int nWarm = static_cast<int>(0.45 * fs);
+            const int nMeas = static_cast<int>(std::round(40.0 * fs / c.freq)); // integer cycles
+            std::vector<double> y(static_cast<size_t>(nMeas));
+            for (int i = 0; i < nWarm + nMeas; ++i)
+            {
+                const double v = big.processSample(c.ampV * std::sin(2.0 * M_PI * c.freq * i / fs));
+                if (i >= nWarm)
+                    y[static_cast<size_t>(i - nWarm)] = v;
+            }
+            char what[112];
+            for (int k : { 1, 2, 3 })
+            {
+                const double g = harmDb(y, fs, c.freq, k, 40);
+                const double ref = c.h[k - 1];
+                // H2 is gated only at the two lowest levels (-30/-24 dBFS), where it tracks to ~0.6 dB. From
+                // -18 dBFS up it does NOT: two even-order sources (J201 and clipper) cancel near -18 dBFS, so a dB
+                // comparison there only measures where the null lands (ngspice -44 dB, plugin -60 dB), and at
+                // -6 dBFS the plugin's H2 is ~6 dB high (docs/accuracy-audit.md §7). H1 and H3 are gated everywhere.
+                if (ref < -60.0 || (k == 2 && caseIdx > 1))
+                    continue;
+                const double tol = (k == 1) ? 2.0 : 2.5;
+                std::snprintf(what, sizeof what, "chain 440 Hz amp %.3f V: H%d", c.ampV, k);
+                check(std::abs(g - ref) <= tol, what, g, ref, tol);
+                if (k == 1) worstH1 = std::max(worstH1, std::abs(g - ref));
+                if (k == 3) worstH3 = std::max(worstH3, std::abs(g - ref));
+            }
+        }
+        std::printf("  [info] end-to-end large signal worst |dH1| = %.2f dB, |dH3| = %.2f dB\n", worstH1, worstH3);
+    }
+
     // ---- 4. inverter bias point (circuit.md's derived self-consistent numbers) ----------------
     {
         const auto t1 = cmosvtc::buildTable(cmosvtc::Device::Simple, 8.65, 1.0e3, -4.0, 8.0);

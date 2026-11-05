@@ -52,7 +52,7 @@ def spice_case(args):
 
 
 def plugin_case(args):
-    f0, amp_v, drive, grunt, shipped = args
+    f0, amp_v, drive, grunt, shipped, phys = args
     n = int(FS * 0.6)
     tt = np.arange(n) / FS
     x = (amp_v / KIN) * np.sin(2 * np.pi * f0 * tt)
@@ -63,6 +63,8 @@ def plugin_case(args):
                "--grunt", grunt, "--master", "1"]
         if not shipped:
             cmd += ["--schematic"]
+            if phys is not None:
+                cmd += ["--fit", f"clipPhysical={phys}"]
         subprocess.run(cmd, check=True, capture_output=True)
         _, y = wavfile.read(out)
     y = y.astype(np.float64) / KOUT
@@ -79,13 +81,14 @@ def main():
     ap.add_argument("--drive", type=float, default=0.5)
     ap.add_argument("--grunt", default="cut")
     ap.add_argument("--shipped", action="store_true", help="render the plugin with its calibrated defaults")
+    ap.add_argument("--phys", type=int, default=None, help="override the plugin clipPhysical (1 = simple model, the one ngspice uses)")
     ap.add_argument("--rails", type=float, nargs=2, default=[2.9, 2.7], help="railNeg railPos (V about VD)")
     ap.add_argument("--dbfs", type=float, nargs="+", default=[-42, -36, -30, -24, -18, -12, -6])
     a = ap.parse_args()
     amps = [KIN * 10 ** (d / 20) for d in a.dbfs]
     with ProcessPoolExecutor(4) as ex:
         sp = list(ex.map(spice_case, [(a.freq, v, a.drive, a.grunt, *a.rails) for v in amps]))
-        pl = list(ex.map(plugin_case, [(a.freq, v, a.drive, a.grunt, a.shipped) for v in amps]))
+        pl = list(ex.map(plugin_case, [(a.freq, v, a.drive, a.grunt, a.shipped, a.phys) for v in amps]))
     print(f"OD chain, {a.freq:.0f} Hz, drive={a.drive}, grunt={a.grunt}, plugin={'shipped' if a.shipped else 'schematic'}")
     print(f"{'in dBFS':>8s} | {'H1 dBV':>7s} " + " ".join(f"{'H'+str(k):>6s}" for k in range(2, 8)) +
           " | " + f"{'H1 dBV':>7s} " + " ".join(f"{'H'+str(k):>6s}" for k in range(2, 8)) + " |  dH1")

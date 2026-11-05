@@ -23,7 +23,8 @@
    `FitParams::schematic()` configuration — every fitted constant put back to its drawn value, the
    empirical stages bypassed, a physical CD4049 clipper — that tracks ngspice closely:
    clean path 0.01–0.41 dB rms, overdrive small-signal ≈1 dB rms, CD4049 stage large-signal within
-   0.3 % swing and ≈0.5 dB per harmonic. That configuration is gated by `ctest` (`SchematicParityTest`).
+   0.3 % swing and ≈0.5 dB per harmonic, and the whole OD chain at large signal within 0.56 dB (H1) / 1.0 dB (H3) of
+   ngspice (H2 at heavy drive does not match, §7). That configuration is gated by `ctest` (`SchematicParityTest`).
 5. **What this does not establish:** that either configuration matches a real Darkglass B7K Ultra. The
    drawn circuit and the captured unit are different things (`circuit.md` already records four places
    where the captures disagree with the drawn values). The shipped calibration is the better match to the
@@ -104,11 +105,21 @@ much harder: at 1 V in, H3 is −9.9 dB re fundamental against ngspice's −19.5
 
 ### 4.4 End-to-end large signal — `compare_chain.py` (BLEND = OD, drive 0.5, GRUNT cut, 440 Hz)
 
-Output fundamental, plugin minus ngspice, over −42…−6 dBFS input: **schematic +1.0…+1.8 dB**;
-**shipped −5.5…−8.9 dB**. Harmonics: schematic tracks ngspice H2 to 1–3 dB once clipping is under way;
-the clipping *onset* differs (ngspice shows H3 at −58 dB at −30 dBFS, the plugin −77 dB) because the J201
-stage's waveshaper still uses fitted shape constants even in schematic mode (there are no drawn values to
-put back; see §7).
+Whole OD chain (J201 shaper, rails, bridged-T, both SKs, LEVEL/BLEND, EQ, MASTER) against ngspice with
+op-amps clamped to the same rail window. **The plugin must use the same MOSFET model as ngspice for this to
+be a like-for-like test** (`--phys 1`, the simple model); with that, over −30…−6 dBFS input (`SchematicParityTest`,
+base-rate 96 kHz): **|ΔH1| ≤ 0.56 dB, |ΔH3| ≤ 1.0 dB**, and H2 tracks to ~0.6 dB at −30/−24 dBFS. H2 does *not*
+track from −18 dBFS up: two even-order sources (J201 and clipper) cancel near −18 dBFS so the dB difference there
+is just where the null lands (ngspice −44 dB, plugin −60 dB), and at −6 dBFS the plugin's H2 is ~6 dB high.
+Shipped calibration: fundamental **−5.5…−8.9 dB** vs ngspice.
+
+⚠ **Correction of an earlier draft of this audit.** It attributed a ~20 dB H3-onset mismatch to the J201
+waveshaper. That was wrong: it compared the plugin's *extended* MOSFET model against ngspice's *simple* one.
+The two published models of the same chip give very different low-level harmonics (H3 at −30 dBFS: simple
+−58 dB, extended −77 dB), which is a statement about uncertainty in the *chip model*, not about either
+implementation. `schematic()` uses the extended model (the paper's own best fit, with the caveat that its
+regressions are measured only for |vGS| ≥ 2.5 V and the trip point sits at that edge); `clipPhysical = 1`
+selects the simple one.
 
 ## 5. Structural errors found, and what was done
 
@@ -143,9 +154,12 @@ for that conflict; it has not been tested against captures.
 ## 7. What is still not modelled or not verified
 
 * **J201 large-signal behaviour.** The stage is a Wiener–Hammerstein model (input HP → degeneration
-  shelf → memoryless square-law shaper with an asymmetric ceiling → Norton current). Its shaper constants
-  are fitted; clipping onset differs from ngspice by ~20 dB in H3 around −30 dBFS (§4.4). The true
-  degeneration is implicit nonlinear feedback.
+  shelf → memoryless square-law shaper with an asymmetric ceiling → Norton current) whose shaper constants
+  are fitted, not derived. Against ngspice end-to-end it tracks H1/H3 well (§4.4) but **even-order content at
+  heavy drive does not match** (H2 up to ~6 dB high at −6 dBFS, and the cancellation null lands elsewhere).
+  The true degeneration is implicit nonlinear feedback; that is the candidate cause, untested.
+* **Which CD4049 model is right.** The simple and extended two-MOSFET models disagree by ~20 dB in low-level
+  H3 (§4.4). Without a measurement of the actual chip the project cannot say which is closer.
 * **CD4049 beyond the static model**: the chip's input-protection diodes to its *dropped* VDD pin, output
   load current, and input/output capacitances are ignored; the extended model's regressions are measured
   only for |vGS| ≥ 2.5 V and the trip point is at its edge; the real small-signal gain is not pinned by the
