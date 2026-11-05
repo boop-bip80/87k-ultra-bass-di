@@ -31,6 +31,13 @@ suspected ADC clipping. See [Round 3 circuit evidence](docs/round3-circuit-evide
 The earlier SPICE residual figures below are **pre-Round-3 baseline figures**
 until the full schematic/CI gates are rerun; they have not been re-certified.
 
+**Round 4 independent follow-up:** the source-load test now includes phase oracles;
+CI now installs ngspice for an independent coupled-stage AC check; the diagnostic
+comparator explicitly rejects XLR takes and changing whole-take THD stimuli.
+Four modified standalone circuit-test executables passed C++17 runtime checks,
+but complete CTest/CI and real hardware parity remain pending. See
+[Round 4 verification and open physics gaps](docs/round4-evidence.md).
+
 ![Obsidian B7000 plugin UI](image.png)
 
 **[Releases from this repository](https://github.com/boop-bip80/87k-ultra-bass-di/releases)**
