@@ -103,6 +103,14 @@ target_link_libraries(InputBufferTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(InputBufferTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME InputBufferTest COMMAND InputBufferTest)
 
+# Independent finite-source input-loading oracle for the published clone input
+# network. This exercises an offline probe, not additional pickup loading in the
+# audio plugin and not a retail Darkglass hardware claim.
+add_executable(SourceLoadingTest tests/SourceLoadingTest.cpp)
+target_link_libraries(SourceLoadingTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(SourceLoadingTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME SourceLoadingTest COMMAND SourceLoadingTest)
+
 add_executable(TrebleAttackTest tests/TrebleAttackTest.cpp)
 target_compile_options(TrebleAttackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME TrebleAttackTest COMMAND TrebleAttackTest)
@@ -154,6 +162,12 @@ add_executable(RailClampTest tests/RailClampTest.cpp)
 target_compile_options(RailClampTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME RailClampTest COMMAND RailClampTest)
 
+# Supply-window, asymmetry, and saturation limits for the explicitly assumed
+# op-amp/JFET rail models. A property test, not a measured pedal rail fixture.
+add_executable(RailHeadroomExtendedTest tests/RailHeadroomExtendedTest.cpp)
+target_compile_options(RailHeadroomExtendedTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME RailHeadroomExtendedTest COMMAND RailHeadroomExtendedTest)
+
 add_executable(ClipperTest tests/ClipperTest.cpp)
 target_compile_options(ClipperTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ClipperTest COMMAND ClipperTest)
@@ -169,6 +183,12 @@ target_link_libraries(PedalChainTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(PedalChainTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME PedalChainTest COMMAND PedalChainTest)
 
+# Full-chain adverse-parameter/signal stress, independent of golden-tone fits.
+add_executable(PedalChainStressTest tests/PedalChainStressTest.cpp)
+target_link_libraries(PedalChainStressTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(PedalChainStressTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME PedalChainStressTest COMMAND PedalChainStressTest)
+
 # Phase 10's own criterion: "all controls full range: no instability, clicks, or NaN/Inf".
 # Covers what PedalChainTest does not — LEVEL, the four EQ knobs, all four OS factors (the
 # ADAA policy is gated on the factor), and knob-motion discontinuity. See the file header.
@@ -179,6 +199,12 @@ add_executable(SchematicParityTest tests/SchematicParityTest.cpp)
 target_link_libraries(SchematicParityTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(SchematicParityTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME SchematicParityTest COMMAND SchematicParityTest)
+
+# Phase + magnitude + component-sensitivity checks for one tightly coupled
+# bridged-T/Sallen-Key segment against independently eliminated circuit nodes.
+add_executable(SchematicOracleExtensionTest tests/SchematicOracleExtensionTest.cpp)
+target_compile_options(SchematicOracleExtensionTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME SchematicOracleExtensionTest COMMAND SchematicOracleExtensionTest)
 
 # The plugin's runtime MODEL switch: allocation-free (counting operator new), reversible, finite.
 add_executable(ModelSwitchTest tests/ModelSwitchTest.cpp)

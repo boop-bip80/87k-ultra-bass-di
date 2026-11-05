@@ -471,17 +471,25 @@ public:
     // sympy.integrate + a direct d/dw check, session-15 log):
     //   F(w) = c*L^3*sqrt(L^2+w^2) + (c*L^5 - L^3)/sqrt(L^2+w^2),  c = beta + 1.5/L^2
     //   G(w) = F(w) - F(0),   F(0) = 2*c*L^4 - L^2      (G(0)=0, G'=T, C1 at the seam)
+    // EVALUATE STABLY: direct F(w)-F(0) subtracts O(L^2) terms to recover an
+    // O(w^2) result; at |w| << L this loses all precision (even returns zero).
+    // With x=w/L, q=sqrt(1+x^2), A=c*L^2=beta*L^2+1.5, the exact same G is
+    //   L^2*[A*(q-1)+(A-1)*(1/q-1)]
+    // = L^2*(q-1)/q * [1+A*(q-1)]
+    // = w^2/[q*(q+1)] * [1+A*x^2/(q+1)]  since q-1=x^2/(q+1).
+    // This keeps the origin's w^2/2 term in full precision without changing
+    // the physical model, its coefficients, or the ADAA antiderivative.
     //   bypass: G(w) = w^2/2
     inline double coreLimitAD(double w) const noexcept
     {
         const double L = (w >= 0.0) ? cPos : cNeg;
         if (L >= kCeilOff)
             return 0.5 * w * w;
-        const double c = eBeta + 1.5 / (L * L);
-        const double L2 = L * L, L3 = L2 * L, L4 = L2 * L2, L5 = L4 * L;
-        const double hyp = std::sqrt(L2 + w * w);
-        const double F0 = 2.0 * c * L4 - L2;
-        return c * L3 * hyp + (c * L5 - L3) / hyp - F0;
+        const double x = w / L;
+        const double x2 = x * x;
+        const double q = std::sqrt(1.0 + x2);
+        const double A = eBeta * L * L + 1.5;
+        return (w * w / (q * (q + 1.0))) * (1.0 + A * x2 / (q + 1.0));
     }
 
     // Antiderivative of waveshape (for 1st-order ADAA):
@@ -489,10 +497,23 @@ public:
     //   since d/dw[w - s*tanh(w/s)] = 1 - sech^2(w/s) = tanh^2(w/s).
     //   FT = coreLimitAD. F(0) = 0 and F is C1, so 1st-order ADAA is well-posed (exact
     // at DC). Stays finite for any w (the core saturates, tanh saturates).
+    // For |w/s| << 1, direct w-s*tanh(w/s) also catastrophically cancels, hiding
+    // the O(w^3) even-bump integral (especially when ADAA compares +/-w and the
+    // even core antiderivatives cancel). The Taylor form through x^9 has relative
+    // remainder O(x^8), below double roundoff at the |x| < 0.01 branch boundary:
+    //   w-s*tanh(x) = w*x^2*(1/3 - 2*x^2/15 + 17*x^4/315 - 62*x^6/2835 + ...).
     inline double waveshapeAD(double w) const noexcept
     {
         const double s = sPos, a = sNeg;
-        return coreLimitAD(w) + 0.5 * a * s * s * (w - s * std::tanh(w / s));
+        const double x = w / s;
+        if (std::abs(x) < 1.0e-2)
+        {
+            const double x2 = x * x;
+            const double series = 1.0 / 3.0 + x2 * (-2.0 / 15.0
+                                 + x2 * (17.0 / 315.0 - x2 * (62.0 / 2835.0)));
+            return coreLimitAD(w) + 0.5 * a * w * w * w * series;
+        }
+        return coreLimitAD(w) + 0.5 * a * s * s * (w - s * std::tanh(x));
     }
 
     // coreLimitAD is elementary for every (beta, L) — unlike the session-14 shape,

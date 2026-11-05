@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chowdsp_wdf/chowdsp_wdf.h>
+#include <cmath>
+#include <stdexcept>
 
 // =============================================================================
 // Stage 1 — Input buffer + bias network (IC1_A, R1/C1/R2/R3)
@@ -20,6 +22,8 @@
 //     drive it carries current but cannot change any downstream node voltage,
 //     so it does not appear in the isolated TF. (It sets input impedance, which
 //     only matters once a real, finite source impedance is modelled.)
+//     Specifically, input Z is R1 || (R2 + 1/sC1): approximately 1 MΩ at DC
+//     and 500 kΩ well above the coupling corner, NOT a constant 1 MΩ.
 //   * R3 feeds the op-amp (+) input, which draws no current, so there is no
 //     drop across R3 and it does not appear in the isolated TF either (it forms
 //     only a negligible LP with the op-amp input capacitance).
@@ -77,4 +81,88 @@ private:
     // JUCE-free (this header is compiled into pure chowdsp_wdf console tests too).
     InputBuffer(const InputBuffer&) = delete;
     InputBuffer& operator=(const InputBuffer&) = delete;
+};
+
+// =============================================================================
+// OFFLINE SOURCE-LOADING DIAGNOSTIC — not used in the plugin processing path.
+// =============================================================================
+// A plugin receives a voltage already converted by an audio interface. Applying
+// the pedal's analog input load to that recording as if it were a raw pickup
+// Thevenin voltage would double-count (or misrepresent) loading. Use this only
+// when an independently known source *open-circuit* voltage and source
+// resistance are available, e.g. to compare the drawn input with a SPICE model.
+//
+// Circuit: Thevenin Vs -> Rsource -> [ R1 || (C1 in series with R2) ] -> GND.
+// Output = voltage across R2; R3 and ideal op-amp input draw no current.
+// For a purely resistive source, its continuous-time transfer function is:
+//
+//                R1 R2 s C1
+// H(s) = ------------------------------------
+//        Rsource + R1 + s C1 [Rsource(R1+R2)+R1 R2]
+//
+// The default Rsource=0 delegates to InputBuffer EXACTLY: this avoids a zero-
+// ohm WDF resistor and preserves identical ideal-source behavior. Real passive
+// pickups have *complex* source impedance (winding L and parasitic C), so a
+// resistive source is a diagnostic only, not a validated pickup emulator.
+class InputBufferSourceLoadProbe
+{
+public:
+    static constexpr double kR1 = 1.0e6;
+    static constexpr double kR2 = InputBuffer::kR2;
+    static constexpr double kC1 = InputBuffer::kC1;
+
+    // Must be non-negative and finite. Immutable after construction: neither
+    // source resistance nor WDF structure changes while processing samples.
+    explicit InputBufferSourceLoadProbe(double sourceResistanceOhms = 0.0)
+        : sourceOhms(validateResistance(sourceResistanceOhms)),
+          rsource(sourceOhms > 0.0 ? sourceOhms : 1.0)
+    {
+    }
+
+    void prepare(double sampleRate)
+    {
+        idealSource.prepare(sampleRate);
+        c1.prepare(sampleRate);
+        reset();
+    }
+
+    void reset()
+    {
+        idealSource.reset();
+        c1.reset();
+    }
+
+    inline double process(double x) noexcept
+    {
+        if (sourceOhms == 0.0)
+            return idealSource.process(x);
+
+        vs.setVoltage(x);
+        vs.incident(inv.reflected());
+        inv.incident(vs.reflected());
+        return chowdsp::wdft::voltage<double>(r2);
+    }
+
+private:
+    static double validateResistance(double ohms)
+    {
+        if (!std::isfinite(ohms) || ohms < 0.0)
+            throw std::invalid_argument("Source load probe requires finite, non-negative source resistance");
+        return ohms;
+    }
+
+    const double sourceOhms;
+    InputBuffer idealSource;
+    chowdsp::wdft::ResistorT<double> rsource;
+    chowdsp::wdft::ResistorT<double> r1 { kR1 };
+    chowdsp::wdft::ResistorT<double> r2 { kR2 };
+    chowdsp::wdft::CapacitorT<double> c1 { kC1 };
+    chowdsp::wdft::WDFSeriesT<double, decltype(c1), decltype(r2)> seriesC1R2 { c1, r2 };
+    chowdsp::wdft::WDFParallelT<double, decltype(r1), decltype(seriesC1R2)> inputLoad { r1, seriesC1R2 };
+    chowdsp::wdft::WDFSeriesT<double, decltype(rsource), decltype(inputLoad)> total { rsource, inputLoad };
+    chowdsp::wdft::PolarityInverterT<double, decltype(total)> inv { total };
+    chowdsp::wdft::IdealVoltageSourceT<double, decltype(inv)> vs { inv };
+
+    InputBufferSourceLoadProbe(const InputBufferSourceLoadProbe&) = delete;
+    InputBufferSourceLoadProbe& operator=(const InputBufferSourceLoadProbe&) = delete;
 };

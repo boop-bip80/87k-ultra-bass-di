@@ -28,6 +28,112 @@ void check(bool ok, const char* name, cmosvtc::Device device, double got, double
     }
 }
 
+void testSimpleDeviceBranchOracles()
+{
+    // Independently evaluated square-law LEVEL=1 device currents in amperes.
+    // These fixed examples cover cutoff, triode, saturation, p-channel
+    // modulation and reverse drain bias. They protect the assumed generic
+    // device law itself, not any claim about a particular pedal's transistor.
+    using cmosvtc::Device;
+    using cmosvtc::nId;
+    using cmosvtc::pId;
+    constexpr auto simple = Device::Simple;
+    const auto checkCurrent = [&](double got, double expected, const char* name) {
+        check(std::abs(got - expected) < 1e-12, name, simple,
+              std::abs(got - expected), 1e-12);
+    };
+    checkCurrent(nId(simple, 1.0, 5.0), 0.0, "NMOS cutoff branch");
+    checkCurrent(nId(simple, 3.0, 0.5), 0.00300972879, "NMOS triode branch");
+    checkCurrent(nId(simple, 3.0, 5.0), 0.005215183046442, "NMOS saturation branch");
+    checkCurrent(nId(simple, 3.0, -5.0), 0.0, "NMOS reverse drain clamp");
+    checkCurrent(pId(simple, 0.3, 5.0), 0.0, "PMOS cutoff branch");
+    checkCurrent(pId(simple, 3.0, 0.5), 0.000959480684556, "PMOS triode branch");
+    checkCurrent(pId(simple, 3.0, 5.0), 0.0033821043584807025,
+                 "PMOS saturation and channel modulation");
+    checkCurrent(pId(simple, 3.0, -5.0), 0.0, "PMOS reverse drain clamp");
+}
+
+void testSupplyParameterization(cmosvtc::Device device)
+{
+    // The nested bisection is also used when the virtual supply or R19
+    // resistor changes. Test the bracketed solution away from the one
+    // nominal 8.65 V / 1 kOhm operating point used to create the tables.
+    struct OperatingPoint { double vcc, r19; };
+    constexpr OperatingPoint points[] = {
+        {9.0, 0.0}, {9.0, 1000.0}, {8.65, 3300.0}, {7.5, 1000.0}
+    };
+    double worstKcl = 0.0, worstSupply = 0.0, worstRise = 0.0;
+    for (const auto& point : points)
+    {
+        double last = std::numeric_limits<double>::infinity();
+        for (int i = 0; i <= 128; ++i)
+        {
+            const double vin = point.vcc * i / 128.0;
+            const auto s = cmosvtc::solve(device, vin, point.vcc, point.r19);
+            worstKcl = std::max(worstKcl,
+                                std::abs(cmosvtc::nId(device, vin, s.vout)
+                                         - cmosvtc::pId(device, s.vdd - vin, s.vdd - s.vout)));
+            worstSupply = std::max(worstSupply,
+                                   std::abs(s.vdd + point.r19 * s.idd - point.vcc));
+            worstRise = std::max(worstRise, s.vout - last);
+            check(std::isfinite(s.vout) && std::isfinite(s.vdd) && std::isfinite(s.idd)
+                      && s.vout >= -1e-10 && s.vout <= s.vdd + 1e-10
+                      && s.vdd >= -1e-10 && s.vdd <= point.vcc + 1e-10,
+                  "variable-supply solution within rails", device, s.vout, point.vcc);
+            last = s.vout;
+        }
+    }
+    check(worstKcl < 1e-8, "variable-supply inverter KCL", device, worstKcl, 1e-8);
+    check(worstSupply < 1e-8, "variable-supply dropper KVL", device, worstSupply, 1e-8);
+    check(worstRise < 1e-6, "variable-supply VTC monotone", device, worstRise, 1e-6);
+    std::printf("    supply sweep: |KCL|<=%.3g A |KVL|<=%.3g V max rise %.3g V\n",
+                worstKcl, worstSupply, worstRise);
+}
+
+void testHermiteDerivativeExtrema(const cmosvtc::Table& t, cmosvtc::Device device)
+{
+    // Value samples every few mV can completely miss a positive derivative
+    // in a 0.25 mV interval. Hermite's derivative is quadratic: its maximum
+    // on each knot interval occurs at t=0, t=1, or its interior vertex.
+    // Checking those exact candidates proves the entire piecewise cubic
+    // (rather than a sparse sampled approximation) is non-increasing.
+    double worstPositiveDerivative = 0.0;
+    double worstDerivativeDisagreement = 0.0;
+    for (size_t i = 0; i + 1 < t.x.size(); ++i)
+    {
+        const double h = t.x[i + 1] - t.x[i];
+        const double a = 2.0 * (t.y[i] - t.y[i + 1]) + h * (t.m[i] + t.m[i + 1]);
+        const double b = 3.0 * (t.y[i + 1] - t.y[i]) - h * (2.0 * t.m[i] + t.m[i + 1]);
+        const double c = h * t.m[i];
+        const auto polynomialDerivative = [&](double s) {
+            return (3.0 * a * s * s + 2.0 * b * s + c) / h;
+        };
+        worstPositiveDerivative = std::max({worstPositiveDerivative,
+                                            polynomialDerivative(0.0), polynomialDerivative(1.0)});
+        if (std::abs(a) > 1e-30)
+        {
+            const double vertex = -b / (3.0 * a);
+            if (vertex > 0.0 && vertex < 1.0)
+                worstPositiveDerivative = std::max(worstPositiveDerivative,
+                                                    polynomialDerivative(vertex));
+        }
+        // Separately exercise the actual hot-path derivative/index lookup.
+        for (const double s : {0.127, 0.499, 0.873})
+        {
+            const double w = t.x[i] + s * h;
+            worstDerivativeDisagreement = std::max(worstDerivativeDisagreement,
+                std::abs(t.deriv(w) - polynomialDerivative((w - t.x[i]) / h)));
+        }
+    }
+    check(worstPositiveDerivative <= 1e-8, "all Hermite-interval derivative maxima <= 0",
+          device, worstPositiveDerivative, 1e-8);
+    check(worstDerivativeDisagreement < 1e-7, "hot-path derivative matches Hermite polynomial",
+          device, worstDerivativeDisagreement, 1e-7);
+    std::printf("    all-Hermite-intervals: worst positive slope %.3g V/V, "
+                "derivative mismatch %.3g V/V\n",
+                worstPositiveDerivative, worstDerivativeDisagreement);
+}
+
 void testDevice(cmosvtc::Device device)
 {
     double worstKcl = 0.0;
@@ -104,6 +210,9 @@ void testDevice(cmosvtc::Device device)
     check(maxInterpolationError < 2e-3, "table vs direct nonlinear solver incl knee", device,
           maxInterpolationError, 2e-3);
 
+    testHermiteDerivativeExtrema(*table, device);
+    testSupplyParameterization(device);
+
     std::printf("  device=%d Vm=%.5f V Vdd=%.5f V Idd=%.4f mA |KCL|<=%.2e A "
                 "|R19|<=%.2e V max table error %.5g V\n",
                 static_cast<int>(device), vm, atTrip.vdd, atTrip.idd * 1000.0,
@@ -114,6 +223,7 @@ void testDevice(cmosvtc::Device device)
 
 int main()
 {
+    testSimpleDeviceBranchOracles();
     testDevice(cmosvtc::Device::Simple);
     testDevice(cmosvtc::Device::Extended);
     if (failures)

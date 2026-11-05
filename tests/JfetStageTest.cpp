@@ -132,6 +132,43 @@ static double minSlope(const JfetStage& stage, double wMax)
     return worst;
 }
 
+// The pre-stabilisation algebra for the core antiderivative (session-15 closed
+// form). Kept here ONLY as a numerical regression comparator: this is exactly
+// equivalent in real arithmetic but catastrophically cancels for |w| << L.
+static double legacyCoreAD(double w, double L, double beta)
+{
+    const double c = beta + 1.5 / (L * L);
+    const double L2 = L * L, L3 = L2 * L, L4 = L2 * L2, L5 = L4 * L;
+    const double hyp = std::sqrt(L2 + w * w);
+    const double F0 = 2.0 * c * L4 - L2;
+    return c * L3 * hyp + (c * L5 - L3) / hyp - F0;
+}
+
+// Independent-precision oracle for G(w)=integral_0^w coreLimit(t)dt. This
+// expression comes from factoring F(w)-F(0) and rationalising sqrt(1+x^2)-1;
+// long double provides more than the implementation's double precision on
+// common native test targets. No captured-pedal data are involved in this test.
+static long double referenceCoreAD(long double w, long double L, long double beta)
+{
+    const long double x = w / L;
+    const long double q = std::sqrt(1.0L + x * x);
+    const long double A = beta * L * L + 1.5L;
+    return (w * w / (q * (q + 1.0L)))
+           * (1.0L + A * x * x / (q + 1.0L));
+}
+
+// Small-input oracle for the exactly odd antiderivative of the even-harmonic
+// tanh^2 bump. The extra x^11 term distinguishes it from the implementation's
+// x^9 Taylor branch, rather than testing a copied polynomial verbatim.
+static long double referenceBumpAD(long double w, long double s, long double a)
+{
+    const long double x = w / s, x2 = x * x;
+    const long double series = 1.0L / 3.0L + x2 * (-2.0L / 15.0L
+                               + x2 * (17.0L / 315.0L + x2 * (-62.0L / 2835.0L
+                               + x2 * (1382.0L / 155925.0L))));
+    return 0.5L * a * w * w * w * series;
+}
+
 // Harmonic magnitudes of a steady tone driven through the stage, via an
 // exact-bin DFT: freq/fs is chosen so an INTEGER number of periods fills the
 // window, so a rectangular window leaks nothing and a genuinely-absent harmonic
@@ -492,6 +529,81 @@ int main()
         if (! offOk)
             ++failures;
     }
+
+    // ---- Test 7: stable JFET antiderivative (exactly the same model) --------
+    // The original F(w)-F(0) subtracts O(L^2) numbers to recover w^2/2. At
+    // w=1e-9 V, the old double expression rounds to ZERO, although the integral
+    // is 5e-19 V^2. Compare both formulae against a long-double oracle and gate
+    // regular audio-level equivalence against the old closed form.
+    std::printf("\n=== JFET ADAA core integral: cancellation regression ===\n");
+    double worstTinyRel = 0.0, worstLegacyRel = 0.0, worstRegularDelta = 0.0;
+    for (const double beta : { 0.0, 0.75 })
+    {
+        JfetStage stage;
+        stage.prepare(48000.0);
+        // Set a=0 to isolate the core integral from the even-bump integral.
+        stage.setNonlinear(JfetStage::kGm, JfetStage::kRo, JfetStage::kRq2,
+                           JfetStage::kSatPos, 0.0, 1.0, 0.5, beta);
+        for (const double w : { -1.0e-6, -1.0e-8, -1.0e-9, -1.0e-10,
+                                 1.0e-10, 1.0e-9, 1.0e-8, 1.0e-6 })
+        {
+            const double L = w >= 0.0 ? 1.0 : 0.5;
+            const long double ref = referenceCoreAD(static_cast<long double>(w),
+                                                    static_cast<long double>(L),
+                                                    static_cast<long double>(beta));
+            const double got = stage.waveshapeAD(w);
+            const double prior = legacyCoreAD(w, L, beta);
+            const double err = static_cast<double>(std::abs((static_cast<long double>(got) - ref) / ref));
+            const double oldErr = static_cast<double>(std::abs((static_cast<long double>(prior) - ref) / ref));
+            worstTinyRel = std::max(worstTinyRel, err);
+            worstLegacyRel = std::max(worstLegacyRel, oldErr);
+        }
+
+        for (const double w : { -20.0, -5.0, -1.0, -0.5, -0.1, -0.01,
+                                 0.01, 0.1, 0.5, 1.0, 5.0, 20.0 })
+        {
+            const double L = w >= 0.0 ? 1.0 : 0.5;
+            const double got = stage.waveshapeAD(w);
+            const double prior = legacyCoreAD(w, L, beta);
+            const double normalizedDelta = std::abs(got - prior) / std::max(1.0, std::abs(got));
+            worstRegularDelta = std::max(worstRegularDelta, normalizedDelta);
+        }
+    }
+    const bool stableOrigin = worstTinyRel < 1.0e-12 && worstLegacyRel > 0.01;
+    const bool equivalentRegular = worstRegularDelta < 1.0e-12;
+    std::printf("  tiny-input max relative error: legacy %.2e, stable %.2e: %s\n",
+                worstLegacyRel, worstTinyRel, stableOrigin ? "PASS" : "FAIL");
+    std::printf("  regular-input max relative old/new delta: %.2e: %s\n",
+                worstRegularDelta, equivalentRegular ? "PASS" : "FAIL");
+    if (! (stableOrigin && equivalentRegular))
+        ++failures;
+
+    // The EVEN tanh^2 bump has its own cancellation in w-s*tanh(w/s). With
+    // symmetric ceilings the core AD is even in w, so [F(w)-F(-w)]/2 isolates
+    // the odd bump AD without adding an implementation-only diagnostic API.
+    // This specifically probes the symmetric +/-w ADAA pair where the bump
+    // error is relevant even though the full F is dominated by its w^2 core.
+    JfetStage bumpStage;
+    bumpStage.prepare(48000.0);
+    bumpStage.setNonlinear(JfetStage::kGm, JfetStage::kRo, JfetStage::kRq2,
+                           0.3, 1.0, 1.0, 1.0, 0.0);
+    double worstBumpRel = 0.0, worstOldBumpRel = 0.0;
+    for (const double w : { 1.0e-10, 1.0e-9, 1.0e-8, 1.0e-6,
+                             0.3 * 0.0099, 0.3 * 0.0101 })
+    {
+        const long double ref = referenceBumpAD(static_cast<long double>(w), 0.3L, 1.0L);
+        const double got = 0.5 * (bumpStage.waveshapeAD(w) - bumpStage.waveshapeAD(-w));
+        const double prior = 0.5 * 0.3 * 0.3 * (w - 0.3 * std::tanh(w / 0.3));
+        worstBumpRel = std::max(worstBumpRel,
+                                static_cast<double>(std::abs((static_cast<long double>(got) - ref) / ref)));
+        worstOldBumpRel = std::max(worstOldBumpRel,
+                                   static_cast<double>(std::abs((static_cast<long double>(prior) - ref) / ref)));
+    }
+    const bool bumpStable = worstBumpRel < 3.0e-5 && worstOldBumpRel > 0.1;
+    std::printf("  symmetric-pair bump AD max relative error: legacy %.2e, stable %.2e: %s\n",
+                worstOldBumpRel, worstBumpRel, bumpStable ? "PASS" : "FAIL");
+    if (! bumpStable)
+        ++failures;
 
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");
     return (failures > 0) ? 1 : 0;

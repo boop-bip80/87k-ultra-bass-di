@@ -15,8 +15,8 @@
 2. The captures themselves are **not in this repository** (`analysis/captures/` is gitignored), so the
    shipped calibration cannot be re-verified from a clone. Its quality claims rest on numbers recorded in
    source comments by earlier sessions.
-3. The schematic being modelled is the **original-B7K clone board** ("Black Mirror VII"), not a Darkglass
-   B7K *Ultra* schematic. MASTER, the 3-way ATTACK centre position, the switchable mid caps and the second
+3. The schematic being modelled is the **Black Mirror VII DIY clone board**, advertised by its builder as
+   *based on* the B7K Ultra; it is not an authenticated Darkglass B7K *Ultra* schematic. MASTER, the 3-way ATTACK centre position, the switchable mid caps and the second
    (DIST) footswitch are engineered approximations (`[ENG]` in `circuit.md`).
 4. An independent ngspice netlist now exists (`analysis/spice_reference/`). Using it found **three
    structural modelling errors**, all fixed (opt-in or in-place, see §5), and added a
@@ -35,7 +35,7 @@
 
 | Source | What it is | Status |
 |---|---|---|
-| `schematics/Primary BOM and schematic.pdf` p.4 | Black Mirror VII (B7K clone) rev 1.1v | read at 300 DPI on 2026-11-05; input network, JFET stage, treble/ATTACK ladder, GRUNT/clipper, bridged-T, both Sallen-Keys, LEVEL/BLEND, tone stack, mids, output all agree with `circuit.md`'s node graphs |
+| `schematics/Primary BOM and schematic.pdf` p.4 | Black Mirror VII, an independently designed DIY board advertised as B7K Ultra-inspired, rev 1.1v | read at 300 DPI on 2026-11-05; input network, JFET stage, treble/ATTACK ladder, GRUNT/clipper, bridged-T, both Sallen-Keys, LEVEL/BLEND, tone stack, mids, output all agree with `circuit.md`'s node graphs |
 | `[ENG]` parts | MASTER pot, ATTACK centre throw, switchable mid caps, DIST footswitch | engineered; no schematic exists in the repo |
 | Reference captures | recordings of an Ultra | **not in the repo**; used for every `FitParams` default |
 
@@ -125,7 +125,7 @@ selects the simple one.
 
 | # | Error | Evidence | Fix |
 |---|---|---|---|
-| 1 | **C21** (100 n, IC5_B → tone stack) was a first-order high-pass into **one fixed resistance** (`c21R`). The stack's input impedance depends on the BASS/TREBLE knobs and on frequency, so the true corner moves with the knobs. | at the drawn 100 n a fixed R is wrong by up to ±15 dB at 20 Hz depending on the BASS knob; no single R is right at two knob positions | C21 is now an 8th MNA node inside `Baxandall` (`setInputCap`). Drawn 100 n: 0.06 dB vs ngspice. **Shipped default changed**: `c21Cap = 1 µF` reproduces the old hardware-anchored `c21R = 130k` response at flat / bass± (0.28 / 0.07 / 0.29 dB rms, 20 Hz–2 kHz) while making the knob dependence physical. `c21R` remains as the legacy path (`c21Cap = 0`). |
+| 1 | **C21** (100 n, IC5_B → tone stack) was a first-order high-pass into **one fixed resistance** (`c21R`). The stack's input impedance depends on the BASS/TREBLE knobs and on frequency, so the true corner moves with the knobs. | at the drawn 100 n a fixed R is wrong by up to ±15 dB at 20 Hz depending on the BASS knob; no single R is right at two knob positions | C21 is now an 8th MNA node inside `Baxandall` (`setInputCap`). Drawn 100 n: 0.06 dB vs ngspice. **Shipped default changed**: `c21Cap = 1 µF` reproduces the old capture-fitted `c21R = 130k` response at flat / bass± (0.28 / 0.07 / 0.29 dB rms, 20 Hz–2 kHz), while modeling the knob dependence from the clone topology. `c21R` remains as the legacy path (`c21Cap = 0`). |
 | 2 | **J201 active load (Q2)** modelled as a fixed `Rq2 = 1 MΩ` "fully bootstrapped across the audio band". Q2's gate sits on R9‖R10 (≈500 k) with C4 (22 n) bootstrapping it from the output, so Q2 is a series R = 1/gm2 + L = τ/gm2 (τ = 11 ms) to AC ground: ~1.4 kΩ at LF, ~19 kΩ at 200 Hz, ~100 kΩ at 1 kHz. | the treble-network output (IC2_A input) was **+28 dB too loud at 40 Hz** (+37 dB at 20 Hz); with the fix it matches ngspice to < 1 dB from 40 Hz to 4 kHz | `TrebleAttack::setActiveLoad` (an 8th node, isolated when off). Opt-in (`jfetQ2Gm > 0`), on in `schematic()`. ⚠ The shipped 17-value ladder, `trebleC7` (132× below drawn), `jfetGm` (7× below) etc. were fitted **on top of the wrong structure**, and plausibly compensate for exactly this. They have not been re-fitted (no captures here). |
 | 3 | **Bridged-T treated as unloaded**, then fed into an ideal-source Sallen-Key. R24 and the SK input network load it heavily above ~1 kHz. | real node 1.1 dB below the unloaded stage at 1 kHz, 2.3 dB at 2 kHz, **4.4 dB at 4 kHz**, ~6 dB at 8 kHz | `RecoveryBridgedT::setCoupledSk` solves [Nmid, Nout, N1, Kp] as one network. Opt-in (`btCoupledSk`), on in `schematic()`. Every OD stage tap then matches ngspice within ~0.5 dB. |
 
@@ -171,7 +171,8 @@ for that conflict; it has not been tested against captures.
   Rails are the fitted ±2.9 / 2.7 V windows in both configurations.
 * **ATTACK centre ("Flat")** and everything `[ENG]`: engineered, unverified.
 * **XLR balanced DI**: not modelled.
-* **The captured Ultra.** Nothing here tests the plugin against hardware.
+* **Input source/loading.** The Black Mirror VII drawing's input has R1 = R2 = 1 MΩ and C1 = 100 nF, so its source-facing impedance is R1 ∥ (R2 + 1/sC1): about 1 MΩ at DC, approaching 500 kΩ at audio frequencies. Darkglass's Ultra manual specifies *nominal* 1 MΩ input impedance but provides no full impedance curve, so these are not strictly comparable circuit measurements. A resistive-source, offline-only diagnostic probe is now available in `InputBuffer.h`; it is intentionally not inserted into the normal plugin path, which already receives an ADC-recorded signal whose source/loading conditions are usually unknown. Real pickups also have inductive/capacitive source impedance.
+* **The captured Ultra.** Nothing here tests the plugin against hardware. The repository's previous analog-A/B figures are historical assertions and lack the raw WAV/fixture evidence needed for independent reproduction.
 
 ## 8. Reproducing
 
@@ -191,3 +192,34 @@ button (APVTS `schematic_model`, default off) in the bottom strip; `cmake -DOBSI
 DRAWN the default. It is a different sound — tighter and louder in the OD path — not a "better" default: the
 calibrated build is the one fitted to the reference captures. Both CD4049 tables are built in
 `prepareToPlay` (about 0.3 s the first time per process) so the live switch only copies pointers.
+
+## 9. Follow-up numerical/measurement audit (2026-11-05)
+
+The second audit added narrow mathematical and robustness checks, documented with reproducible test
+names in [`round2-evidence-report.md`](round2-evidence-report.md):
+
+* The J201 waveshaper's core and even-harmonic **antiderivatives** had severe *relative* cancellation
+  at extremely small signal. Algebraic rearrangement and a small-argument series reduced numerical
+  error without refitting the J201 or changing its intended nonlinear transfer curve.
+* The modeled Black Mirror VII input sees R1 ∥ (R2 + 1/sC1), approaching ~500 kΩ in-band with R1=R2=1 MΩ.
+  A separately opt-in *offline* resistive-source probe tests loading; applying such a probe to the
+  normal ADC-recorded signal could double-count unknown loading and was intentionally avoided.
+* Narrow, unequal estimated op-amp rails previously allowed a parabolic knee to produce nonzero output
+  for zero input; the effective knee is now capped by each side's headroom. This corrects software
+  edge behavior, **not** the undocumented TL07x physical rail/slew behavior.
+* A new coupled bridged-T/Sallen-Key oracle checks **phase as well as magnitude**, 27 frequency/circuit
+  cases and eight one-component perturbations. An optional separate ngspice verification of that isolated
+  reference remains **unrun without the executable**; an algebraic check cannot authenticate a board.
+* Device-current and interpolation sweeps constrain the assumed CD4049 equations, while 648 selector/
+  model/sample-rate signal-chain stress cases probe stability and allocations. A finite output is not
+  a tonal-accuracy result.
+* Physical-source capture provenance now distinguishes the digital replay stimulus, a synchronized
+  *measured dry voltage at the loaded pedal input*, and the pedal output. Hashes, fixture metadata and
+  independent control sweeps are required before a capture is even eligible for manual review. Separate
+  input-probe, output ADC/preamp and plugin-render voltage calibrations are necessary for an absolute
+  analog-gain residual; raw dBFS differences alone cannot provide it. This
+  supplies a path to valid evaluation; **no authentic hardware captures have been supplied yet**.
+
+The project remains **clone-informed and only partially SPICE-validated**, with an unverified fitted
+default and incomplete DI hardware modeling. No numerical solver fix should be advertised as having
+resolved the missing physical-circuit information or as establishing retail Ultra 1:1 parity.

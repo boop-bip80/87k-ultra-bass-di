@@ -14,6 +14,15 @@
 // gets applied to one and not the other, and the plugin then quietly sounds
 // different from everything that was measured.
 //
+// EVIDENCE STATUS (2026-11-05): All dated session notes below are historical
+// tuning records, NOT independently repeatable hardware calibration. Their raw
+// reference WAVs, acquisition fixture, and measured volts-per-full-scale are
+// absent from this repository. In particular, kInputRefNominal = 0.90 is a
+// FITTED INPUT SCALE, not a scope-measured physical input voltage. Neither this
+// scale nor kOutputMakeup authenticates a Darkglass B7K Ultra circuit or proves
+// the plugin reproduces a retail unit. See docs/accuracy-audit.md and
+// docs/reference-measurement-protocol.md before reusing numerical claims.
+//
 // So they live here, once, JUCE-free. OfflineRender can still override either at
 // runtime (`--input-ref` / `--output-makeup`) — that is how a candidate value is
 // swept — but the DEFAULT both sides start from is this file, and committing a
@@ -21,8 +30,10 @@
 // =============================================================================
 namespace GainStaging
 {
-// Volts (real, at the pedal's input jack) per 1.0 full-scale sample.
-// ✅ ANCHORED — Phase-7 calibration step 1 COMPLETE (2026-07-22,
+// Assumed equivalent input volts per 1.0 full-scale sample, used internally
+// by the nonlinear model; NOT a measured volts-per-FS for a retail pedal.
+// HISTORICAL, UNREPRODUCIBLE FIT NOTE — Phase-7 step 1 was marked complete
+// in an earlier session (2026-07-22,
 // calibration-and-gain-staging.md §1). Findings:
 //   • `analysis/captures/bypass.wav`'s cal_1k tone returns at -0.012 dB vs the
 //     test signal (linear 0.9987): the reamp rig is UNITY round-trip, so the

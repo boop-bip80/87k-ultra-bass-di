@@ -1,10 +1,62 @@
 # Analysis Harness
 
-This directory holds the A/B validation harness used to check the plugin against
-real-pedal reference captures: FR shape, THD/harmonic structure, and null-depth
-tracking across the control surface.
+This directory contains a legacy A/B fitting harness and the newer physical-capture provenance
+and comparison tooling. The legacy scripts were designed for real-pedal reference captures, but
+**those raw WAVs and their acquisition metadata are not committed in this repository**.
+Consequently, historic frequency-response, THD and null-depth scores cannot be independently
+reproduced from a fresh clone and are **not evidence of hardware parity**. The schematic-based
+SPICE comparison is to an independent *clone board*, not a traced retail Darkglass circuit.
 
-## Quick Start
+For the evidence hierarchy and corrected claims, see
+[`docs/schematic-provenance.md`](../docs/schematic-provenance.md),
+[`docs/accuracy-audit.md`](../docs/accuracy-audit.md), and
+[`docs/round2-evidence-report.md`](../docs/round2-evidence-report.md).
+
+## New reproducible hardware-capture gate
+
+Use [`docs/reference-measurement-protocol.md`](../docs/reference-measurement-protocol.md) to collect
+three different signals for each physical test: the digital reamp stimulus (which may be reused),
+the separately *measured loaded input voltage* at the pedal connector, and the actual pedal
+output. The schema-v2 manifest records the source, input-monitor and output WAV locations,
+individual SHA-256 hashes, identified hardware/revision and calibrated routing/controls.
+
+```bash
+# Without independent real-hardware captures this correctly returns UNVERIFIED (exit 2).
+python3 analysis/validate_hardware_capture.py \
+    --manifest analysis/hardware-captures/manifest.json
+
+# Test the validator and the diagnostic comparator on synthetic known answers.
+python3 -m unittest discover -s analysis -p 'test_*.py'
+
+# After collecting an authentic take and rendering the plugin from that take's
+# measured loaded-input signal (not from an ideal-source stimulus WAV):
+python3 analysis/compare_hardware_captures.py \
+    --manifest analysis/hardware-captures/manifest.json \
+    --take-index 0 --render-input path/to/verified-render-input.wav \
+    --render path/to/plugin-render.wav \
+    --output path/to/diagnostic.json
+```
+
+The validator can yield `UNVERIFIED` or `REVIEW_REQUIRED`; it never certifies a sound match.
+The comparator reports diagnostic differences with `parity_certified=false`, including
+gain/level and only those phase/harmonic measurements supported by actual excitation and
+fixture calibration. A small error on **one** take cannot certify circuitry parity across
+all controls, operating levels, physical units and XLR/quarter-inch outputs.
+
+**Absolute-gain prerequisite:** A dry input monitor and a pedal output must be calibrated
+separately from their ADC counts to **volts at their respective connectors**. A physical
+input/output gain comparison also requires a documented mapping from the plugin renderer's
+input/output digital scale to the same electrical voltage scale. `dry_monitor.calibration_db_to_pedal_input`
+handles only the measured dry-input probe correction; it says **nothing** about the output
+ADC/DI preamp gain. If output calibration or render scale is absent, numbers expressed in
+dBFS are **diagnostic digital-level differences**, not verified pedal voltage gain. Keep any
+phase result withheld unless the dry monitor and output share a clock and known fixture
+delays; likewise do not report general THD from an arbitrary broadband/noisy clip.
+
+The legacy quick start below remains available for the earlier fitting scripts but
+should not be confused with the provenance-checked workflow.
+
+## Legacy fit-harness quick start
 
 ```bash
 # 1. Generate the reference test signal
@@ -23,13 +75,23 @@ python3 analysis/comprehensive_report.py --os 8
 python3 analysis/matrix_grade.py analysis/reports/comprehensive_data.json
 ```
 
-## Independent circuit reference (`spice_reference/`)
+## Independent clone-circuit reference (`spice_reference/`)
 
 `spice_reference/` holds an ngspice netlist of the drawn schematic (`b7k_spice.py`) and scripts that
 compare the plugin against it — `compare_clean.py`, `compare_od.py`, `compare_clipper.py`,
 `compare_chain.py` — plus `gen_reference.py`, which regenerates `tests/data/schematic_reference.h`
 (the data `ctest -R SchematicParityTest` gates on). It needs `ngspice` on PATH; it shares no code with the
 plugin and needs no captures. Results and caveats: `docs/accuracy-audit.md`.
+
+An additional `spice_reference/verify_coupled_stage.py` command checks that the isolated
+bridged-T/loaded-Sallen-Key netlist has the eight intended clone component values and, if
+`ngspice` is installed, compares its magnitude/phase against the nodal/DSP model. It is an
+explicitly **optional verification**, not a falsely green test when `ngspice` is missing:
+
+```bash
+python3 analysis/spice_reference/verify_coupled_stage.py --print-netlist
+python3 analysis/spice_reference/verify_coupled_stage.py  # needs ngspice
+```
 
 ## File Reference
 
@@ -84,7 +146,7 @@ Without limiting, each order produces a large spurious spike at exactly
 - Coverage extends to ~9.5 kHz (H2 only)
 - Above 12 kHz, THD doesn't exist at 48 kHz (H2 past Nyquist)
 
-### Calibration Workflow (the proven order)
+### Suggested calibration workflow (not yet independently revalidated)
 
 1. **Validate STRUCTURE before AMOUNT** — get FR shape and per-harmonic structure
    (which orders, where placed) right first. THD magnitude is downstream.
@@ -121,6 +183,12 @@ reference recordings); populate it locally before running `comprehensive_report.
   partial-blend FR read shows a false "plugin too bright" error.
 - **Always write analysis scripts as files**, never as inline commands. Renders
   take seconds each; Farina harmonic analysis takes seconds per segment.
+- **Separate source and loaded input**: A line-level stimulus, passive pickup's
+  open-circuit Thevenin source, and measured voltage after input loading are
+  not interchangeable. The clone's R1/C1/R2 network approaches 500 kΩ input
+  impedance in the audio band, even though the manufacturer specifies a 1 MΩ
+  nominal input for a retail B7K Ultra; the latter is not a measured impedance
+  curve. Do not double-apply pickup/loading losses to an ADC-recorded signal.
 
 ## Dependencies
 
