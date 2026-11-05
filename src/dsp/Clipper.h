@@ -332,13 +332,28 @@ public:
         }
         if (phys && physDevice == device && std::abs(physVcc - vcc) < 1e-12 && std::abs(physR19 - r19) < 1e-12)
             return;
-        phys = cmosvtc::buildTable(static_cast<cmosvtc::Device>(device), vcc, r19, -4.0, 8.0);
+        // Realtime-safe path: a table primed by primePhysicalTables() is selected by pointer copy only.
+        std::shared_ptr<const cmosvtc::Table> t = (device == 1) ? primedSimple : primedExtended;
+        if (! t || std::abs(primedVcc - vcc) > 1e-12 || std::abs(primedR19 - r19) > 1e-12)
+            t = cmosvtc::cachedTable(static_cast<cmosvtc::Device>(device), vcc, r19); // NOT realtime-safe
+        phys = t;
         physDevice = device;
         physVcc = vcc;
         physR19 = r19;
         clampHi = 9.6 - phys->vm;   // D1 (anode W, cathode +9V): conducts ~0.6 V above the rail
         clampLo = -0.6 - phys->vm;  // D2 (anode GND, cathode W): conducts ~0.6 V below ground
         wPrev = 0.0;
+    }
+
+    // Build (or fetch from the process-wide cache) BOTH device tables now, so a later setPhysicalVtc() —
+    // e.g. the plugin's runtime SCHEMATIC switch, on the audio thread — only copies a pointer. Call from
+    // prepare time. ~0.3 s the first time in a process, instant afterwards.
+    void primePhysicalTables(double vcc = 8.65, double r19 = 1.0e3)
+    {
+        primedSimple = cmosvtc::cachedTable(cmosvtc::Device::Simple, vcc, r19);
+        primedExtended = cmosvtc::cachedTable(cmosvtc::Device::Extended, vcc, r19);
+        primedVcc = vcc;
+        primedR19 = r19;
     }
     bool physicalVtc() const noexcept { return phys != nullptr; }
     double physicalTripPoint() const noexcept { return phys ? phys->vm : kTripPointV; }
@@ -787,6 +802,8 @@ private:
     std::shared_ptr<const cmosvtc::Table> phys;
     int physDevice = 0;
     double physVcc = 8.65, physR19 = 1.0e3;
+    std::shared_ptr<const cmosvtc::Table> primedSimple, primedExtended;
+    double primedVcc = -1.0, primedR19 = -1.0;
     double clampHi = kClampHi, clampLo = kClampLo;
     // Phase-7 capture-fit amplitude params (FitParams.h), nominal-initialised.
     double a0 = kA0, satLo = kSatLo, satHi = kSatHi, hardness = kHardness;

@@ -8,7 +8,7 @@
 ```
 Build:  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 AU:     cmake --build build --target ObsidianB7000_AU   (auto-installs; bump VERSION to force a Logic rescan)
-Tests:  ctest --test-dir build --output-on-failure -j 12          # 23/23; never bare ctest
+Tests:  ctest --test-dir build --output-on-failure -j 12          # 24/24; never bare ctest
 Format: clang-format -i src/**/*.{cpp,h}
 ```
 
@@ -29,8 +29,10 @@ question, and `dsp-validator` after any DSP stage change.
 - **`docs/accuracy-audit.md`** — what the model does and does not match (independent ngspice reference,
   results, structural errors found, every constant that departs from the drawn board). Start here for any
   accuracy claim. `analysis/spice_reference/` is the reference (`compare_*.py`, `gen_reference.py`);
-  `FitParams::schematic()` / `OfflineRender --schematic` / `-DOBSIDIAN_SCHEMATIC_MODEL=ON` select the
-  drawn-value configuration.
+  `FitParams::schematic()` / `OfflineRender --schematic` / the plugin's MODEL→DRAWN button (APVTS
+  `schematic_model`; `-DOBSIDIAN_SCHEMATIC_MODEL=ON` flips its default) select the drawn-value configuration.
+  The live switch is allocation-free only because `prepareToPlay` primes the CD4049 tables
+  (`PedalChain::primePhysicalTables`) — keep it that way (`ModelSwitchTest` counts allocations).
 - **`docs/nonlinear-component-modeling.md`** — the two non-WDF-native parts, the CD4049UBE clipper
   and the J201 JFET stage: datasheets/papers/SPICE and the modelling approach used for each.
 - **`docs/calibration-and-gain-staging.md`** — `kInputRef` calibration, output-makeup calibration,
@@ -95,7 +97,7 @@ variants):
 
 ## Testing
 
-`ctest --test-dir build --output-on-failure -j 12` — 23/23 (incl. `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
+`ctest --test-dir build --output-on-failure -j 12` — 24/24 (incl. `ModelSwitchTest`, `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
 against the closed-form oracle in `analysis/eq_reference.py`; `ClipperTest`/`JfetStageTest` cover
 the two nonlinear stages; `OSValidationTest`/`OSFidelity` cover oversampling and aliasing;
 `SwitchTransitionTest` covers the switch crossfades; `FinalSweepTest` is a full control sweep (every

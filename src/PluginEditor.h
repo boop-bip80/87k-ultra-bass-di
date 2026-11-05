@@ -51,12 +51,13 @@ private:
     double lastOutputTrim { 0.0 };
 
     juce::Label osLabel, osLiveLabel, osRenderLabel, osSizeLabel, osVersionLabel;
-    juce::Label trimLinkLabel;
+    juce::Label trimLinkLabel, modelLabel;
     juce::ComboBox osRealtimeBox, osRenderBox;
     juce::TextButton scaleBtn;
     juce::TextButton trimLockButton { "LINK" };
+    juce::TextButton modelButton { "DRAWN" };   // MODEL: off = calibrated (default), on = drawn schematic
     std::unique_ptr<juce::ComboBoxParameterAttachment> osRealtimeAttach, osRenderAttach;
-    std::unique_ptr<juce::ButtonParameterAttachment> trimLockAttach;
+    std::unique_ptr<juce::ButtonParameterAttachment> trimLockAttach, modelAttach;
 
     std::unique_ptr<PedalFace> pedalFace;
     juce::Rectangle<int> pedalFaceArea, osStripArea;

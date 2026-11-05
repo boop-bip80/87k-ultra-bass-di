@@ -77,6 +77,7 @@ ObsidianB7000AudioProcessor::ObsidianB7000AudioProcessor()
     pLoMidFreq = apvts.getRawParameterValue("lo_mid_freq");
     pHiMidFreq = apvts.getRawParameterValue("hi_mid_freq");
     pDistEngage = apvts.getRawParameterValue("dist_engage");
+    pSchematic = apvts.getRawParameterValue("schematic_model");
     pInputTrim = apvts.getRawParameterValue("input_trim");
     pOutputTrim = apvts.getRawParameterValue("output_trim");
     pOversampling = apvts.getRawParameterValue("oversampling");
@@ -167,6 +168,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ObsidianB7000AudioProcessor:
         juce::ParameterID{"trim_link", 1}, "Trim Link", true));
     params.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"hq", 1}, "HQ", true));
+    // MODEL: false = the capture-calibrated build (default); true = the drawn-schematic model
+    // (FitParams::schematic(): drawn component values, physical CD4049, no empirical OD correction stages).
+    // See docs/accuracy-audit.md. -DOBSIDIAN_SCHEMATIC_MODEL=ON flips the DEFAULT, not the availability.
+#ifdef OBSIDIAN_SCHEMATIC_MODEL
+    constexpr bool kSchematicDefault = true;
+#else
+    constexpr bool kSchematicDefault = false;
+#endif
+    params.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{"schematic_model", 1}, "Schematic Model", kSchematicDefault));
 
     // Trims
     params.add(std::make_unique<juce::AudioParameterFloat>(
@@ -248,17 +259,11 @@ void ObsidianB7000AudioProcessor::prepareToPlay(double sampleRate, int samplesPe
         // two would otherwise diverge). Called after prepare() so each stage re-derives
         // its coefficients from the stored sample rate. The DAW-domain scalars
         // (kInputRef/kOutputMakeup) are deliberately NOT here — they live in GainStaging.h.
-#ifdef OBSIDIAN_SCHEMATIC_MODEL
-        // Build option -DOBSIDIAN_SCHEMATIC_MODEL=ON: every capture-fitted constant put back to its DRAWN
-        // schematic value, the non-schematic OD correction stages bypassed, the physical CD4049 VTC and the
-        // coupled bridged-T/Sallen-Key solve on. This is the configuration tests/SchematicParityTest.cpp
-        // gates against ngspice. It is a different SOUND from the shipped calibration (louder/tighter OD, see
-        // docs/accuracy-audit.md), not a "better" default — the shipped build is fitted to reference captures.
-        // The tables it builds allocate, so this lives in prepareToPlay, never on the audio thread.
-        d.setFitParams(FitParams::schematic());
-#else
-        d.setFitParams(FitParams{});
-#endif
+        // Prime the physical-CD4049 tables HERE (allocating, ~0.3 s the first time per process) so the runtime
+        // SCHEMATIC switch in processBlock() only ever copies pointers.
+        d.primePhysicalTables();
+        schematicApplied = pSchematic->load() >= 0.5f;
+        d.setFitParams(schematicApplied ? FitParams::schematic() : FitParams{});
         d.setFactorOrder(startOrder);
         // Seed the CONTROL state at the knobs' actual current positions before
         // reset(), for the same reason the pot smoothers are seeded below: reset()
@@ -318,6 +323,24 @@ void ObsidianB7000AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     for (int i = numIn; i < numOut; ++i)
         buffer.clear(i, 0, numSamples);
+
+    // ---- Model switch (calibrated <-> drawn schematic): allocation-free, applied at a block boundary ----
+    // FitParams is plain doubles; every setter reachable from setFitParams() is allocation-free once the
+    // physical tables were primed in prepareToPlay(). The reset() settles the stages' carried state (a
+    // different topology cannot continue the old one's capacitor history) and re-opens the OS FIR, so the
+    // switch is a one-block transient, like the OS-factor change — it is a deliberate, rare action.
+    {
+        const bool wantSchematic = pSchematic->load() >= 0.5f;
+        if (wantSchematic != schematicApplied)
+        {
+            schematicApplied = wantSchematic;
+            for (auto& d : dsp)
+            {
+                d.setFitParams(wantSchematic ? FitParams::schematic() : FitParams{});
+                d.reset();
+            }
+        }
+    }
 
     // ---- OS factor: render factor offline, live factor realtime -------------
     const int wantOrder = isNonRealtime() ? (int) pRenderOversampling->load()

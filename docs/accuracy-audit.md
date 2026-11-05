@@ -186,6 +186,8 @@ python3 analysis/spice_reference/compare_chain.py --freq 440 --drive 0.5 --grunt
 ctest --test-dir build -R SchematicParityTest --output-on-failure      # needs no ngspice
 ```
 
-`OfflineRender --schematic` renders the drawn-value configuration; `cmake -DOBSIDIAN_SCHEMATIC_MODEL=ON`
-builds the plugin itself that way (a different sound — tighter and louder in the OD path — not a "better"
-default).
+`OfflineRender --schematic` renders the drawn-value configuration. In the plugin it is the **MODEL / DRAWN**
+button (APVTS `schematic_model`, default off) in the bottom strip; `cmake -DOBSIDIAN_SCHEMATIC_MODEL=ON` makes
+DRAWN the default. It is a different sound — tighter and louder in the OD path — not a "better" default: the
+calibrated build is the one fitted to the reference captures. Both CD4049 tables are built in
+`prepareToPlay` (about 0.3 s the first time per process) so the live switch only copies pointers.
