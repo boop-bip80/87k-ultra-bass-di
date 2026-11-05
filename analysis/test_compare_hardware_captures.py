@@ -167,6 +167,19 @@ class HardwareComparisonTests(unittest.TestCase):
         self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
         self.assertIn("possible converter clipping", report["tone_thd_withheld_reason"])
 
+    def test_late_tone_change_withholds_early_tone_thd(self):
+        t = np.arange(3 * FS) / FS
+        start = .08 * np.sin(2 * np.pi * 440. * t)
+        tail = np.arange(FS) / FS
+        changed = np.concatenate((start,
+                                  .08 * signal.chirp(tail, f0=80., f1=12000.,
+                                                     t1=1., method="logarithmic")))
+        harmonic = .003 * np.sin(2 * np.pi * 880. * np.arange(len(changed)) / FS)
+        report = compare_arrays(changed, changed + harmonic,
+                                changed + .7 * harmonic, FS)
+        self.assertIsNone(report["stationary_single_tone_thd"])
+        self.assertIn("throughout the take", report["tone_thd_withheld_reason"])
+
     def test_impure_stimulus_does_not_get_called_pedal_thd(self):
         n = int(FS * 1.8)
         t = np.arange(n) / FS

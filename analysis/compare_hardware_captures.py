@@ -149,6 +149,30 @@ def _mono_tone_frequency(dry, fs):
     return f0
 
 
+def _whole_take_stationary_tone(dry, fs, f0):
+    """Fail closed before attributing 3-second THD to an entire changing take.
+
+    The harmonic estimator itself stays limited to the first 3 seconds for
+    bounded CPU/memory. Require every part of a reasonably short capture to
+    remain the SAME stable sinusoid; longer recordings should be deliberately
+    trimmed into identified takes before THD analysis.
+    """
+    if len(dry) > MAX_SPECTRAL_FRAMES:
+        return False
+    count = min(8, max(2, int(round(len(dry) / fs))))
+    reference_rms = None
+    for part in np.array_split(dry, count):
+        local_frequency = _mono_tone_frequency(part, fs)
+        if local_frequency is None or abs(local_frequency - f0) > max(.5, .001 * f0):
+            return False
+        level = _rms(part - part.mean())
+        if reference_rms is None:
+            reference_rms = level
+        elif abs(_db(level / reference_rms)) > 1.0:
+            return False
+    return True
+
+
 def _harmonics(samples, f0, fs, max_order=8):
     """Simultaneous least-squares sinusoid fit; avoids FFT-bin leakage bias."""
     nyquist_order = min(max_order, int((fs * 0.475) // f0))
@@ -390,6 +414,12 @@ def compare_arrays(dry, physical, rendered, sample_rate, *,
 
     tone_frequency = _mono_tone_frequency(dry, sample_rate)
     result["stationary_single_tone_thd"] = None
+    if tone_frequency is not None and not _whole_take_stationary_tone(dry, sample_rate, tone_frequency):
+        result["tone_thd_withheld_reason"] = (
+            "input is not a stable single tone throughout the take, or the take "
+            "exceeds the bounded analysis window; trim separate stimulus segments"
+        )
+        tone_frequency = None
     if tone_frequency is not None:
         input_thd = _harmonics(dry, tone_frequency, sample_rate)
         physical_thd = _harmonics(physical, tone_frequency, sample_rate)

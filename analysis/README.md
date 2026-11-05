@@ -62,6 +62,10 @@ For manifest comparisons, physical and modeled per-track THD diagnostics remain
 available, but the numerical **THD difference is withheld** pending verified
 pedal identity, electrical input calibration and actual renderer output lineage.
 
+THD is reported only for a stable single-tone stimulus across the entire bounded
+take; a tone that becomes a sweep or changes level later is withheld, and long
+takes must be explicitly trimmed before harmonic grading.
+
 The comparator reports diagnostic differences with `parity_certified=false`, including
 gain/level and only those phase/harmonic measurements supported by actual excitation and
 fixture calibration. A small error on **one** take cannot certify circuitry parity across
