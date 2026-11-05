@@ -1,14 +1,16 @@
 # Obsidian-B7000 — Project Memory
 
-> Obsidian-B7000 is a circuit-level emulation of the **Darkglass B7K Ultra** bass overdrive/DI
-> preamp, built as an AU/VST3 plugin using JUCE 8+ and chowdsp_wdf. Author/Company: Leigh Pierce.
+> Obsidian-B7000 is a component-structured bass overdrive/DI plugin informed by PCB Guitar Mania's
+> independent **Black Mirror VII** (Ultra-inspired) DIY schematic, not an authenticated retail Darkglass
+> B7K Ultra circuit transcription. Retail circuit and acoustic parity remain unverified.
+> Built as an AU/VST3 plugin using JUCE 8+ and chowdsp_wdf. Author/Company: Leigh Pierce.
 
 ## Quick reference
 
 ```
 Build:  cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 AU:     cmake --build build --target ObsidianB7000_AU   (auto-installs; bump VERSION to force a Logic rescan)
-Tests:  ctest --test-dir build --output-on-failure -j 12          # 24/24; never bare ctest
+Tests:  ctest --test-dir build --output-on-failure -j 12          # always run the complete suite; never bare ctest
 Format: clang-format -i src/**/*.{cpp,h}
 ```
 
@@ -59,14 +61,15 @@ IN → input buffer → J201 JFET gain stage → treble/ATTACK ladder → DRIVE 
 Per-stage implementations live in `src/dsp/` (one header per stage; `PedalChain.h` wires them
 together, `PedalDSP.h` is the per-channel wrapper). `MASTER` volume, the 3-way `ATTACK` switch, and
 the switchable mid-band frequencies are **engineered additions** (tagged `[ENG]` in `circuit.md`) —
-the schematic on hand is the original B7K, and these behaviours are built to match the Ultra's
-documented control surface rather than a verified Ultra schematic. The *topology* of everything else is
-schematic-verified, but the shipped *values* are not the drawn ones — 34 constants are fitted to captures
+the source drawing is PCB Guitar Mania's independent Black Mirror VII DIY circuit. These behaviours
+approximate the Ultra's documented control surface without any authenticated retail Ultra schematic.
+Other topology has been compared against that DIY drawing only; retail-device correspondence is unknown,
+and the shipped *values* are not the drawn ones — numerous constants were fitted to reference audio
 (see `docs/accuracy-audit.md` §6) and three OD-path stages are non-schematic corrections. **Do not describe
 the shipped build as "circuit-accurate" or "from real component values"**; use the measured statements in
 `docs/accuracy-audit.md`.
 
-Two footswitches: main true bypass, and a second `dist_engage` that mutes only the overdrive branch
+Two modeled footswitch controls: a software bypass and a second `dist_engage` that mutes only the overdrive branch
 (forces the BLEND crossfade to 100% clean) without disturbing the EQ/MASTER/output stage.
 
 ## Fitted constants
@@ -80,8 +83,8 @@ variants):
 | `c21Cap` | 1 µF, solved INSIDE `Baxandall` (was a fixed-R HP, `c21R` = 130 kΩ, now the legacy path) | `FitParams.h`, `Baxandall.h` |
 | `jfetSatNeg` | 1.9 | `FitParams.h` |
 | Treble/ATTACK ladder (17 constants) | fitted set, not drawn values | `FitParams.h` |
-| `kInputRef` | 0.90 | `FitParams.h` |
-| `kOutputMakeup` | 4.3297 | `FitParams.h` |
+| `kInputRef` | 0.90 | `GainStaging.h` |
+| `kOutputMakeup` | 4.3297 | `GainStaging.h` |
 | D1/D2 clamp window | derived from `kTripPointV` = 2.657 | `Clipper.h` |
 | Clipper solve | bracketed Newton + bisection (`rtsafe`) | `Clipper.h` |
 | `clipK` | 2.0 (ADAA anchor) | `FitParams.h` |
@@ -97,7 +100,7 @@ variants):
 
 ## Testing
 
-`ctest --test-dir build --output-on-failure -j 12` — 24/24 (incl. `ModelSwitchTest`, `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
+`ctest --test-dir build --output-on-failure -j 12` — run the entire suite (29 CTest entries currently declared; execution on a fresh cross-platform runner has not been verified). Includes `ModelSwitchTest`, `SchematicParityTest`, the plugin in `FitParams::schematic()` configuration vs committed ngspice data). Per-stage tests validate each WDF stage
 against the closed-form oracle in `analysis/eq_reference.py`; `ClipperTest`/`JfetStageTest` cover
 the two nonlinear stages; `OSValidationTest`/`OSFidelity` cover oversampling and aliasing;
 `SwitchTransitionTest` covers the switch crossfades; `FinalSweepTest` is a full control sweep (every

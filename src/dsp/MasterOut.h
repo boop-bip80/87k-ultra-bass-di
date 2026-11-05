@@ -7,13 +7,16 @@
 // =============================================================================
 // Stage 9 — MASTER volume [ENG] + IC6_B output buffer + output HP network
 // =============================================================================
-// The LAST linear stage before the J201 nonlinear front end. circuit.md
+// The LAST post-EQ output stage; it is DOWNSTREAM of the J201 nonlinear front end. circuit.md
 // "MASTER volume [ENG]" + "Output (¼\" jack) — IC6_B".
 //
 //   MASTER (VR8) 100k A-taper [ENG] — post-EQ output volume divider:
 //       top lug = HI-MID (IC6_A) output via C36 (2u2), bottom lug = VD,
 //       wiper → IC6_B(+). Unity at full CW; attenuation-only.
-//   IC6_B (TL074) — unity output buffer.
+//   IC6_B — unity output buffer in the clone-derived transcription. The 1.1v
+//   Black Mirror VII BOM specifies TL072ACP for IC6 but the 1.2v BOM specifies
+//   TL074ACN; the actual board/package revision is unverified. This stage
+//   models an ideal op-amp follower, not its package-specific slew/GBW.
 //   C37 (2u2) → R47 (1k series) → OUT ; R46 (100k) output pulldown.
 //
 // ---- Topology (signal ground = VD = 0) --------------------------------------
