@@ -706,6 +706,48 @@ int main()
             ++failures;
     }
 
+    // ---- Test 9: impulsive-drive stability across sample rates and ADAA -----
+    // Test 7 checks the root against independent bisection for smooth waves;
+    // this covers its other extreme: discontinuities that defeat warm-start
+    // assumptions, including a grossly out-of-range 100 V diagnostic impulse.
+    // Residue ADAA can exceed the fitted VTC ceilings by design; only Off and
+    // Full are subject to the direct VTC swing limit.
+    std::printf("\n=== Clipper solver: bipolar steps and impulses at 1x..8x ===\n");
+    {
+        const FitParams fit {};
+        bool ok = true;
+        for (double fs : { 48000.0, 96000.0, 192000.0, 384000.0 })
+            for (auto mode : { Clipper::Adaa::Off, Clipper::Adaa::Full,
+                               Clipper::Adaa::Residue })
+                for (const auto& gc : kGrunts)
+                {
+                    Clipper st;
+                    st.prepare(fs);
+                    st.setNonlinear(fit.clipA0, fit.clipSatLo, fit.clipSatHi, fit.clipK);
+                    st.setADAA(mode);
+                    st.setGrunt(gc.g);
+                    for (int n = 0; n < 4096; ++n)
+                    {
+                        const double drive = (n % 127 == 0) ? 100.0 : 9.0;
+                        const double x = (n & 1) ? -drive : drive;
+                        const double y = st.process(x);
+                        const bool finite = std::isfinite(y);
+                        const bool bounded = mode == Clipper::Adaa::Residue
+                            || std::abs(y) <= std::max(fit.clipSatLo, fit.clipSatHi) + 1.0e-9;
+                        if (! finite || ! bounded)
+                        {
+                            std::printf("  FAIL fs %.0f mode %d GRUNT %s sample %d x %.2f y %.17g\n",
+                                        fs, static_cast<int>(mode), gc.name, n, x, y);
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+        std::printf("  36 mode/rate/GRUNT stress cases, 4096 samples each: %s\n",
+                    ok ? "PASS" : "FAIL");
+        if (! ok) ++failures;
+    }
+
     std::printf("\n%s\n", failures == 0 ? "All tests passed." : "Some tests FAILED.");
     return (failures > 0) ? 1 : 0;
 }

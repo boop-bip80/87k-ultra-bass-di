@@ -5,6 +5,14 @@
 
 #include "CmosInverterVtc.h"
 
+// PROVENANCE (2026-11-05): The topology and component labels below describe
+// PCB Guitar Mania's Black Mirror VII Ultra-inspired DIY circuit. They are
+// NOT an authenticated retail Darkglass B7K Ultra netlist. The "physical"
+// two-MOSFET option and trip point are outputs of assumed generic CD4049
+// equations, not measurements of the target pedal's CMOS die or rails. The
+// shipped sigmoid VTC and its fitted parameters also lack raw reference WAVs
+// in this repository. See docs/schematic-provenance.md and accuracy-audit.md.
+
 // =============================================================================
 // Stage 5 — CD4049UBE CMOS-inverter clipper (IC3) + GRUNT bank  [THE distortion]
 // =============================================================================
@@ -122,7 +130,8 @@ public:
     static constexpr double kHardness = 2.0;
 
     // ** SESSION-118: the inverter TRIP POINT, decoupled from the fitted VTC
-    // amplitude. This is a PHYSICAL constant and must NOT track a fit. **
+    // amplitude. This is a constant of the ASSUMED DEVICE/RAIL MODEL, not a
+    // measured retail-pedal value, and must not track the separate VTC fit. **
     // Node W is worked in a frame where 0 = the self-bias trip point Vm, so the
     // absolute node voltage is W_abs = w + Vm and the 1N4148 rail clamps are
     //   D1: W_abs <= +9.6  ->  w <=  9.6 - Vm
