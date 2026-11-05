@@ -412,6 +412,9 @@ public:
                            f.masterTaperBreak2, f.masterTaperFrac2);
 
         c21.r = f.c21R;
+        // C21: inside the Baxandall MNA when c21Cap > 0 (the default), so it works against the
+        // stack's real knob-dependent input impedance; the legacy fixed-R HP only runs when it is 0.
+        baxandall.setInputCap(f.c21Cap);
         recovery.setComponents(f.btR22, f.btR23, f.btC16, f.btC17);
 
         // RailClamp on EVERY op-amp output (calibration §6 / GATE-4 item). The
@@ -586,7 +589,8 @@ public:
             odMakeupOut = odMakeup.process(odDown);
         }
         double s = levelBlend.process(cleanDelayed, odMakeupOut);
-        s = c21.process(s);          // C21 100n inter-stage HP (bass shaping)
+        if (! baxandall.hasInputCap())
+            s = c21.process(s);      // legacy fixed-R C21 (only when c21Cap == 0; see FitParams::c21Cap)
         s = eqPreGain.process(s);
         s = baxandall.process(s);
 
@@ -636,7 +640,7 @@ public:
     {
         PostTaps t;
         t.blend = levelBlend.process(cleanDelayed, odDown);
-        t.c21 = c21.process(t.blend);
+        t.c21 = baxandall.hasInputCap() ? t.blend : c21.process(t.blend);
         t.eqPre = eqPreGain.process(t.c21);
         t.baxandall = baxandall.process(t.eqPre);
         t.loMid = loMid.process(t.baxandall);

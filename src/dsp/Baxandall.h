@@ -41,8 +41,18 @@
 // Vout → LO-MID. Both are inter-stage HP couplers (like C2/C15/C36 elsewhere);
 // the oracle (and this stage) are defined at the Baxandall network boundary and
 // EXCLUDE them, so BOTH had to be placed during Phase-6 integration.
-//   C21 → `PedalChain::C21Highpass` (a ~150 Hz HP into the ~10k stack input; it
-//         shapes the bass audibly, and its R is the Phase-7 fit `c21R`).
+//   C21 → ⭐ NOW INSIDE THIS STAGE (`setInputCap()`, an EIGHTH MNA node — the stack's
+//         input rail `Vi`). It used to be `PedalChain::C21Highpass`, a first-order HP
+//         into ONE fixed resistance (`c21R`). That is structurally wrong in exactly the
+//         way the C31 note below describes: the stack's input impedance is strongly
+//         knob- and frequency-dependent (R33 + the bass network, in parallel with the
+//         C28 treble branch), so the true HP corner MOVES with BASS/TREBLE. Measured
+//         against an independent ngspice netlist of the drawn schematic
+//         (analysis/spice_reference/compare_clean.py): with the drawn 100n a fixed R
+//         is wrong by up to ±15 dB at 20 Hz depending on the BASS knob, no single R is
+//         right at more than one knob position, and the same stack with C21 inside the
+//         MNA matches spice to <0.1 dB. The legacy fixed-R path remains available
+//         (`setInputCap(0)` + `PedalChain::C21Highpass`) as the pre-fix behaviour.
 //   C31 → ⭐ LANDED AT SESSION 177 (open-work item 16), and NOT here: it is
 //         `MidBand::setInputCap()`, a FIFTH MNA node inside the LO-MID stage.
 //         ⚠ It is deliberately NOT a `C21Highpass`-shaped bolt-on, because the
@@ -81,18 +91,20 @@ public:
 
     void prepare(double sampleRate)
     {
+        fsSeen = sampleRate;
         const double twoOverT = 2.0 * sampleRate;
         gc25 = kC25 * twoOverT;
         gc26 = kC26 * twoOverT;
         gc28 = kC28 * twoOverT;
         gc29 = kC29 * twoOverT;
         gc30 = kC30 * twoOverT;
+        gc21 = c21 * twoOverT;
         dirty = true;
         rebuild();
         reset();
     }
 
-    void reset() noexcept { ieq25 = ieq26 = ieq28 = ieq29 = ieq30 = 0.0; }
+    void reset() noexcept { ieq25 = ieq26 = ieq28 = ieq29 = ieq30 = ieq21 = 0.0; }
 
     // Electrical pot fractions (B-taper linear; knob→fraction + direction applied
     // by the processor). ab→0 = BASS boost, at→0 = TREBLE boost, 0.5 = flat.
@@ -128,10 +140,29 @@ public:
         if (mna::differs(r, r36)) { r36 = r; dirty = true; }
     }
 
+    // C21 — the 100n (drawn) IC5_B -> stack-input coupling cap, solved INSIDE the stack as an
+    // eighth MNA node so it works against the stack's real, knob-dependent input impedance.
+    // `farads <= 0` removes it (the stage then expects the caller to have applied C21 itself,
+    // i.e. the legacy PedalChain::C21Highpass path). Takes effect on the next rebuild.
+    void setInputCap(double farads) noexcept
+    {
+        const double c = farads > 0.0 ? farads : 0.0;
+        if (mna::differs(c, c21))
+        {
+            c21 = c;
+            gc21 = c21 * 2.0 * fsSeen;
+            ieq21 = 0.0;
+            dirty = true;
+        }
+    }
+    bool hasInputCap() const noexcept { return c21 > 0.0; }
+
     inline double process(double vin) noexcept
     {
         if (dirty)
             rebuild();
+        if (c21 > 0.0)
+            return process8(vin);
 
         // RHS: sources (R33, C28) + capacitor history currents. See header.
         double rhs[7];
@@ -157,6 +188,31 @@ public:
     }
 
 private:
+    // 8-node path: [A, B, Wb, T3, T1, Wt, Vout, Vi]. Vi is the stack input rail (C21 out, R33 and
+    // C28 left plates). Same conventions as the 7-node path; C21 runs vin -> Vi, C28 now runs
+    // Vi -> T3, and R33 feeds A from Vi instead of from the source.
+    inline double process8(double vin) noexcept
+    {
+        double rhs[8];
+        rhs[0] = ieq25;                    // A
+        rhs[1] = ieq26;                    // B
+        rhs[2] = -ieq25 - ieq26;           // Wb
+        rhs[3] = ieq28;                    // T3
+        rhs[4] = ieq29;                    // T1
+        rhs[5] = 0.0;                      // Wt
+        rhs[6] = ieq30;                    // (-)/Vout
+        rhs[7] = gc21 * vin + ieq21 - ieq28; // Vi
+        double x[8];
+        mna::matvec<8>(yinv8, rhs, x);
+        ieq25 = 2.0 * gc25 * (x[0] - x[2]) - ieq25;
+        ieq26 = 2.0 * gc26 * (x[1] - x[2]) - ieq26;
+        ieq28 = 2.0 * gc28 * (x[3] - x[7]) - ieq28; // T3 - Vi
+        ieq29 = 2.0 * gc29 * (x[4] - x[6]) - ieq29;
+        ieq30 = 2.0 * gc30 * x[6] - ieq30;
+        ieq21 = 2.0 * gc21 * (x[7] - vin) - ieq21;  // Vi - Vin
+        return rail.process(x[6]);
+    }
+
     void setPos(double& slot, double v) noexcept
     {
         const double c = v < 1e-6 ? 1e-6 : (v > 1.0 - 1e-6 ? 1.0 - 1e-6 : v);
@@ -194,15 +250,40 @@ private:
                     yinv[i][j] = tmp[i][j];
         }
         // else keep the previous good inverse (degenerate pot endpoint).
+        if (c21 > 0.0)
+        {
+            double Y8[8][8] = {};
+            for (int i = 0; i < 7; ++i)
+                for (int j = 0; j < 7; ++j)
+                    Y8[i][j] = Y[i][j];
+            // A: R33 now returns to Vi (the source term moved to the Vi row)
+            Y8[0][7] = -1.0 / kR33;
+            // T3: C28 now returns to Vi, not to the ideal source
+            Y8[3][7] = -gc28;
+            // Vi: (gc21 + 1/R33 + gc28) Vi - A/R33 - gc28 T3 = gc21*vin + ieq21 - ieq28
+            Y8[7][7] = gc21 + 1.0 / kR33 + gc28;
+            Y8[7][0] = -1.0 / kR33;
+            Y8[7][3] = -gc28;
+            double tmp8[8][8];
+            if (mna::invert<8>(Y8, tmp8))
+            {
+                for (int i = 0; i < 8; ++i)
+                    for (int j = 0; j < 8; ++j)
+                        yinv8[i][j] = tmp8[i][j];
+            }
+        }
         dirty = false;
     }
 
     double gc25 = 0.0, gc26 = 0.0, gc28 = 0.0, gc29 = 0.0, gc30 = 0.0;
+    double c21 = 0.0, gc21 = 0.0, ieq21 = 0.0; // C21 input-coupling cap (0 = not in this stage)
+    double yinv8[8][8] = {};
     double posBass = 0.5, posTreble = 0.5; // electrical pot fractions (0.5 = flat)
     double r36 = kR36; // runtime-settable; see setTrebleWiperR
     double yinv[7][7] = {};
     double ieq25 = 0.0, ieq26 = 0.0, ieq28 = 0.0, ieq29 = 0.0, ieq30 = 0.0;
     bool dirty = true;
+    double fsSeen = 48000.0;
     RailClamp rail;
 
     Baxandall(const Baxandall&) = delete;

@@ -263,6 +263,7 @@ static const FitField kFitFields[] = {
     {"odNotchQScale", &FitParams::odNotchQScale},
     {"odNotchDepthDb", &FitParams::odNotchDepthDb},
     {"c21R", &FitParams::c21R},
+    {"c21Cap", &FitParams::c21Cap},
     {"trebleLadderDampR", &FitParams::trebleLadderDampR},
     {"attackTapRa", &FitParams::attackTapRa},
     {"attackTapRb", &FitParams::attackTapRb},

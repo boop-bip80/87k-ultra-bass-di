@@ -545,7 +545,20 @@ struct FitParams
     // tone stack's effective INPUT impedance, which is a nominal ~10k estimate,
     // not a single schematic part. It sets a ~159 Hz highpass that audibly shapes
     // bass, so it is a real fit knob (fit alongside the tone stack).
-    double c21R = 130.0e3;  // RE-AIMED AT HARDWARE (was 220k; 100k before that; nominal 10k).
+    // ⭐ SESSION 2026-11 — C21 IS NOW SOLVED INSIDE THE BAXANDALL STAGE (c21Cap, below), and
+    // c21R is the LEGACY path (used only when c21Cap == 0). Reason: a first-order HP into ONE
+    // fixed R cannot represent a corner that moves with the BASS/TREBLE knobs. Measured against
+    // an independent ngspice netlist of the drawn schematic (analysis/spice_reference/):
+    //   * drawn 100n + any fixed R is wrong by up to +-15 dB at 20 Hz depending on the knob;
+    //   * 1 uF solved INSIDE the stack reproduces the old 130k behaviour at flat / bass+ / bass-
+    //     (rms 0.28 / 0.07 / 0.29 dB over 20 Hz-2 kHz) — i.e. the hardware-anchored ~12 Hz corner
+    //     the c21R fit was re-aimed at is what a 1 uF coupling cap gives into the real stack
+    //     impedance, with the physically correct knob dependence on top.
+    // c21Cap = 1 uF is therefore a CALIBRATION (the drawn clone board has 100n; the captured
+    // Ultra's LF behaviour needs ~1 uF), exactly as c21R was, but now structurally correct.
+    // Set `--fit c21Cap=100e-9` for the drawn board, or 0 for the legacy fixed-R path.
+    double c21Cap = 1.0e-6;
+    double c21R = 130.0e3;  // LEGACY (c21Cap == 0 only). RE-AIMED AT HARDWARE (was 220k; 100k before that; nominal 10k).
                             // Corner ~12.2 Hz (was 7.2). Fitted against the standard reference
                             // captures, then deliberately moved off that fit and re-anchored to
                             // targeted hardware measurements for this specific corner — broadband
