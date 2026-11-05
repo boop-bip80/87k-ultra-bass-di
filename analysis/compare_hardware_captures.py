@@ -202,24 +202,27 @@ def _correlation_lag(dry, output, fs, max_lag_ms):
 
 
 def _stationary_excitation(dry, fs):
-    """Refuse stationary-Welch frequency grading of a moving sweep/music.
+    """Conservative multiscale screen for stationary-noise Welch-H1 excitation.
 
-    Spectral-centroid drift is only a conservative SCREEN, not proof of
-    stationarity. Users must still document the stationary noise excitation.
+    Four repeated sweeps can conceal their drift in four equally large parts.
+    Sixteen subwindows expose that within-block drift. Neither scale alone
+    proves stationarity; stimulus type must still be recorded by the fixture.
     """
     n = min(len(dry), int(6 * fs), MAX_ANALYSIS_FRAMES)
-    pieces = np.array_split(dry[:n], 4)
-    centroids = []
-    for part in pieces:
-        if _rms(part - part.mean()) < MIN_INPUT_RMS:
+    for count in (4, 16):
+        centroids = []
+        for part in np.array_split(dry[:n], count):
+            if _rms(part - part.mean()) < MIN_INPUT_RMS:
+                return False
+            freq, psd = signal.welch(part, fs=fs, nperseg=min(2048, len(part)))
+            band = (freq >= FREQUENCY_MIN_HZ) & (freq <= min(FREQUENCY_MAX_HZ, fs * 0.45))
+            p = psd[band]
+            if p.sum() <= 1e-24:
+                return False
+            centroids.append(float(np.dot(freq[band], p) / p.sum()))
+        if min(centroids) <= 0 or max(centroids) / min(centroids) > 1.5:
             return False
-        freq, psd = signal.welch(part, fs=fs, nperseg=min(2048, len(part)))
-        band = (freq >= FREQUENCY_MIN_HZ) & (freq <= min(FREQUENCY_MAX_HZ, fs * 0.45))
-        p = psd[band]
-        if p.sum() <= 1e-24:
-            return False
-        centroids.append(float(np.dot(freq[band], p) / p.sum()))
-    return min(centroids) > 0 and max(centroids) / min(centroids) <= 1.5
+    return True
 
 
 def _spectral_metrics(dry, physical, rendered, fs, fixture_delays,
@@ -401,12 +404,43 @@ def compare_arrays(dry, physical, rendered, sample_rate, *,
                 "plugin": plugin_thd,
                 "thd_difference_percentage_points":
                     plugin_thd["thd_percent"] - physical_thd["thd_percent"],
-                "caveat": "THD excludes noise; this single excitation cannot establish broadband nonlinear parity",
+                "caveat": ("THD excludes noise; model-vs-hardware distortion also requires "
+                           "matched, measured physical input volts-per-FS and verified render settings"),
             }
         else:
             result["tone_thd_withheld_reason"] = "source impurity is not >=20 dB below both outputs, or output lacks a measurable fundamental"
 
+    # Near full scale indicates SUSPECTED converter clipping, not proof:
+    # a clean 0 dBFS sine may also be near full-scale. Report raw PCM metrics,
+    # but withhold pedal-attributed THD and calibrated comparisons until a
+    # capture is repeated with measured headroom.
+    clipping_codes = []
+    if result["physical_pedal"]["near_full_scale_fraction"] > .001:
+        clipping_codes.append("physical_capture_clipping_suspected")
+    if result["dry_input"]["near_full_scale_fraction"] > .001:
+        clipping_codes.append("dry_monitor_clipping_suspected")
+    result["warning_codes"] = clipping_codes
+    if clipping_codes:
+        result["calibrated_output_level_difference_db"] = None
+        result["latency_aligned_waveform_error_db_re_reference"] = None
+        result["stationary_single_tone_thd"] = None
+        result["tone_thd_withheld_reason"] = (
+            "possible converter clipping in physical capture or dry input; "
+            "cannot attribute measured harmonics to pedal circuitry"
+        )
+        response = result["frequency_response"]
+        response["magnitude_residual_rms_db"] = None
+        response["magnitude_residual_p95_abs_db"] = None
+        response["phase_residual_rms_deg"] = None
+        response["withheld_reason"] = (
+            "physical capture or dry monitor has samples near full scale; "
+            "repeat with calibrated ADC headroom before grading frequency response"
+        )
+
     concerns = []
+    if clipping_codes:
+        concerns.append("possible converter clipping: " + ", ".join(clipping_codes)
+                        + "; THD, calibrated gain, waveform and FR grading withheld")
     for label, track_stats in (("dry input", result["dry_input"]),
                                ("physical capture", result["physical_pedal"]),
                                ("plugin render", result["plugin_render"])):
@@ -505,6 +539,10 @@ def main(argv=None):
                         help="measured physical-output ADC volts at +1 FS, not a guess")
     parser.add_argument("--render-output-volts-per-fs", type=float,
                         help="measured plugin-render volts at +1 FS, in same physical units")
+    parser.add_argument("--physical-pedal-input-volts-per-fs", type=float,
+                        help="measured volts at the pedal input per FS of the calibrated renderer-input WAV")
+    parser.add_argument("--effective-renderer-input-ref-volts-per-fs", type=float,
+                        help="effective GainStaging volts/FS for this render (including any input-ref override)")
     parser.add_argument("--channel", type=int, choices=(0, 1), help="select explicit channel for stereo WAVs")
     parser.add_argument("--max-lag-ms", type=float, default=MAX_LAG_MS)
     parser.add_argument("--reference-fixture-delay-samples", type=float)
@@ -530,6 +568,13 @@ def main(argv=None):
         volts = (args.reference_output_volts_per_fs, args.render_output_volts_per_fs)
         if any(x is not None for x in volts) and not all(x is not None for x in volts):
             raise MeasurementError("both output volts-per-FS calibration factors must be specified together")
+        input_volts = (args.physical_pedal_input_volts_per_fs,
+                       args.effective_renderer_input_ref_volts_per_fs)
+        if any(v is not None for v in input_volts) and not all(v is not None for v in input_volts):
+            raise MeasurementError("both physical and renderer input volts-per-FS factors must be supplied together")
+        if all(v is not None for v in input_volts) and (
+                any(not math.isfinite(v) or v <= 0 or v > 1e9 or v < 1e-9 for v in input_volts)):
+            raise MeasurementError("input volts-per-FS factors must be finite and positive")
         fs_dry, dry = load_wav(dry_path, args.channel)
         fs_ref, reference = load_wav(reference_path, args.channel)
         fs_mod, rendered = load_wav(args.render, args.channel)
@@ -554,6 +599,46 @@ def main(argv=None):
                                    "physical_reference": str(reference_path),
                                    "plugin_render": str(args.render)}
         report["render_input_audit"] = render_input_provenance
+        input_voltage_match = None
+        input_voltage_difference_db = None
+        if all(v is not None for v in input_volts):
+            input_voltage_difference_db = 20.0 * math.log10(input_volts[0] / input_volts[1])
+            input_voltage_match = abs(input_voltage_difference_db) <= 0.1
+        report["pedal_input_voltage_calibration"] = {
+            "physical_volts_per_fs": input_volts[0],
+            "renderer_input_ref_volts_per_fs": input_volts[1],
+            "difference_db": input_voltage_difference_db,
+            "matched_within_0p1_db": input_voltage_match,
+            "note": ("declared electrical scales require independent measurement and proof "
+                     "the plugin render used the stated input reference"),
+        }
+        # Keep digital-domain THD diagnostics in direct compare_arrays() calls,
+        # but fail closed for MANIFEST-backed attribution when nonlinear drive
+        # voltages are missing or unmatched. These scalar declarations still do
+        # not certify hardware authenticity or actual render lineage.
+        if args.manifest is not None and input_voltage_match is not True:
+            report["nonlinear_attribution_withheld_reason"] = (
+                "physical pedal-input volts-per-FS and effective renderer input reference "
+                "are missing or differ by more than 0.1 dB"
+            )
+            report["calibrated_output_level_difference_db"] = None
+            report["latency_aligned_waveform_error_db_re_reference"] = None
+            response = report["frequency_response"]
+            response["magnitude_residual_rms_db"] = None
+            response["magnitude_residual_p95_abs_db"] = None
+            response["phase_residual_rms_deg"] = None
+            response["withheld_reason"] = report["nonlinear_attribution_withheld_reason"]
+            # The numerical THD table is retained as an explicitly UNATTRIBUTED
+            # digital-domain diagnostic; do not interpret its difference as
+            # a transistor/op-amp modelling error without voltage matching.
+            report["warnings"].append(report["nonlinear_attribution_withheld_reason"])
+        report["hardware_vs_model_nonlinear_attribution_eligible"] = bool(
+            args.manifest is not None
+            and evidence["status"] == "REVIEW_REQUIRED"
+            and input_voltage_match is True
+            and not report["warning_codes"]
+            and render_input_provenance is not None
+        )
         if args.manifest is not None:
             report["warnings"].append(
                 "render-input samples verified, but proof the provided render WAV came from that input/settings is still required")

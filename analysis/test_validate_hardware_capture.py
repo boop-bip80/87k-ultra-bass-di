@@ -14,12 +14,15 @@ class CaptureValidatorTests(unittest.TestCase):
     def make_wav(path, rate=48000):
         index = int(path.stem.rsplit("-", 1)[-1]) if "-" in path.stem else 0
         role_offset = 1000 if path.name.startswith("dry-") else (2000 if path.name.startswith("output-") else 3000)
-        sample = (role_offset + index).to_bytes(2, "little")
+        amplitude = role_offset + index
+        positive = amplitude.to_bytes(2, "little", signed=True)
+        negative = (-amplitude).to_bytes(2, "little", signed=True)
         with wave.open(str(path), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(rate)
-            wav.writeframes(sample * rate)
+            wav.writeframes((positive + negative) * (rate // 2)
+                            + (positive if rate % 2 else b""))
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     @classmethod
@@ -81,6 +84,24 @@ class CaptureValidatorTests(unittest.TestCase):
             manifest["fixture"]["pickup_loading_measured"] = False
             path.write_text(json.dumps(manifest))
             self.assertEqual(validate(path)["status"], "UNVERIFIED")
+
+
+    def test_nonzero_dc_only_wav_is_not_usable_ac_stimulus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path, manifest = self.make_complete_manifest(root)
+            take = manifest["takes"][0]
+            dry_path = root / take["dry_input_file"]
+            with wave.open(str(dry_path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(48000)
+                wav.writeframes((1600).to_bytes(2, "little", signed=True) * 48000)
+            take["dry_input_sha256"] = hashlib.sha256(dry_path.read_bytes()).hexdigest()
+            path.write_text(json.dumps(manifest))
+            result = validate(path)
+            self.assertEqual(result["status"], "UNVERIFIED")
+            self.assertTrue(any("DC-only" in issue for issue in result["problems"]))
 
     def test_unphysical_probe_calibration_is_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:

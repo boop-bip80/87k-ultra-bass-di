@@ -1,5 +1,13 @@
 # Accuracy audit — how close is the plugin to the circuit?
 
+> **Round 3 update (2026-11-05):** This document's numerical tables are a
+> historical baseline calculated before the opt-in Q2 C4, rail-coupled IC4_A/B
+> and finite output-load updates. They must be rerun with the new
+> `FitParams::schematic()` configuration and independently checked before
+> anyone describes them as the current result. The shipped fitted defaults are
+> unchanged. See [Round 3 evidence](round3-circuit-evidence.md) for the exact
+> correction scope, syntax-only verification and remaining parity blockers.
+>
 > Written 2026-11-05 after an independent re-measurement. **Read this before quoting any accuracy
 > claim about this project.** The earlier README described the plugin as "solved … from real component
 > values rather than approximated by ear". That was not a fair summary of the shipped build, and this

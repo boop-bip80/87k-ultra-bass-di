@@ -35,9 +35,22 @@ python3 analysis/compare_hardware_captures.py \
     --take-index 0 --render-input path/to/verified-render-input.wav \
     --render path/to/plugin-render.wav \
     --output path/to/diagnostic.json
+
+# Only when independently measured, supply BOTH input volts/FS scales:
+#   --physical-pedal-input-volts-per-fs <measured_at_connector>
+#   --effective-renderer-input-ref-volts-per-fs <actual_render_setting>
+# Both are needed to compare nonlinear headroom at an equal electrical drive.
+# Output volts/FS and fixture delay must separately be calibrated for gain/phase.
 ```
 
 The validator can yield `UNVERIFIED` or `REVIEW_REQUIRED`; it never certifies a sound match.
+The comparator rejects nonzero DC-only WAVs as excitation and checks stationary
+Welch assumptions at both four and sixteen subwindows (repeated sweeps must not
+pose as stationary noise). Possible ADC clipping withholds pedal THD and
+calibrated frequency/gain grades. Missing or mismatched absolute input-voltage
+scales withhold manifest-backed nonlinear attribution, while retaining raw
+digital-domain diagnostics.
+
 The comparator reports diagnostic differences with `parity_certified=false`, including
 gain/level and only those phase/harmonic measurements supported by actual excitation and
 fixture calibration. A small error on **one** take cannot certify circuitry parity across

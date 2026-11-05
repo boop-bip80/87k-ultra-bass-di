@@ -125,6 +125,31 @@ class HardwareComparisonTests(unittest.TestCase):
         self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
         self.assertIn("nonstationary", report["frequency_response"]["withheld_reason"])
 
+
+    def test_repeated_chirps_do_not_qualify_for_stationary_welch_h1(self):
+        t = np.arange(FS) / FS
+        sweep = signal.chirp(t, f0=50., f1=12000., t1=1., method="linear")
+        dry = .1 * np.tile(sweep, 4)
+        report = compare_arrays(dry, .7 * dry, np.tanh(1.2 * dry), FS,
+                                output_calibration=(1., 1.))
+        spectrum = report["frequency_response"]
+        self.assertEqual(spectrum["qualified_log_frequency_bins"], 0)
+        self.assertIsNone(spectrum["magnitude_residual_rms_db"])
+        self.assertIn("nonstationary", spectrum["withheld_reason"])
+
+    def test_suspected_adc_clipping_withholds_pedal_thd_and_calibrated_grade(self):
+        t = np.arange(2 * FS) / FS
+        dry = .1 * np.sin(2 * np.pi * 440. * t)
+        physical = np.clip(1.5 * np.sin(2 * np.pi * 440. * t), -1., 1.)
+        rendered = dry + .002 * np.sin(4 * np.pi * 440. * t)
+        report = compare_arrays(dry, physical, rendered, FS,
+                                output_calibration=(1., 1.))
+        self.assertIn("physical_capture_clipping_suspected", report["warning_codes"])
+        self.assertIsNone(report["stationary_single_tone_thd"])
+        self.assertIsNone(report["calibrated_output_level_difference_db"])
+        self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
+        self.assertIn("possible converter clipping", report["tone_thd_withheld_reason"])
+
     def test_impure_stimulus_does_not_get_called_pedal_thd(self):
         n = int(FS * 1.8)
         t = np.arange(n) / FS
@@ -209,6 +234,43 @@ class HardwareComparisonTests(unittest.TestCase):
             self.assertTrue(report["capture_paths"]["measured_dry_input"].endswith(take["dry_input_file"]))
             self.assertIsNotNone(report["render_input_audit"])
             self.assertIsNone(report["frequency_response"]["magnitude_residual_rms_db"])
+            self.assertIsNone(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
+            self.assertFalse(report["hardware_vs_model_nonlinear_attribution_eligible"])
+            self.assertIn("volts-per-FS", report["nonlinear_attribution_withheld_reason"])
+            # Equal declared electrical drive scales can satisfy this one gate;
+            # an incomplete synthetic manifest can still never certify parity.
+            matched = ["--physical-pedal-input-volts-per-fs", "0.9",
+                       "--effective-renderer-input-ref-volts-per-fs", "0.9",
+                       "--reference-output-volts-per-fs", "1.0",
+                       "--render-output-volts-per-fs", "1.0"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main(["--manifest", str(path), "--take-index", "0",
+                           "--render-input", str(render_input_path),
+                           "--render", str(render_path), "--output", str(report_path)]
+                          + matched)
+            self.assertEqual(rc, 0)
+            report = json.loads(report_path.read_text())
+            self.assertTrue(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
+            self.assertIsNotNone(report["calibrated_output_level_difference_db"])
+            mismatched = list(matched)
+            mismatched[1] = "1.0"  # 0.915 dB hotter physical drive than renderer
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main(["--manifest", str(path), "--take-index", "0",
+                           "--render-input", str(render_input_path),
+                           "--render", str(render_path), "--output", str(report_path)]
+                          + mismatched)
+            self.assertEqual(rc, 0)
+            report = json.loads(report_path.read_text())
+            self.assertFalse(report["pedal_input_voltage_calibration"]["matched_within_0p1_db"])
+            self.assertIsNone(report["calibrated_output_level_difference_db"])
+            self.assertIn("more than 0.1 dB", report["nonlinear_attribution_withheld_reason"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main(["--manifest", str(path), "--take-index", "0",
+                           "--render-input", str(render_input_path),
+                           "--render", str(render_path), "--output", str(report_path)]
+                          + ["--physical-pedal-input-volts-per-fs", "0.9"])
+            # The intentionally incomplete electrical calibration is invalid.
+            self.assertEqual(rc, 2)
             take["dry_input_sha256"] = "0" * 64
             path.write_text(json.dumps(json.loads(path.read_text()) | {"takes": [take]}))
             with contextlib.redirect_stdout(io.StringIO()):

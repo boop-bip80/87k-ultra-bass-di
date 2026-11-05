@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import re
+import struct
 import wave
 
 
@@ -75,7 +76,9 @@ def _verify_capture_file(root, filename, digest, name, sample_rate, problems, re
             if channels > 0 and sample_width > 0:
                 # WAV headers can claim millions of frames while the real data
                 # chunk is truncated. Read the frames, bounded in memory.
-                has_signal = False
+                counts = [0] * channels
+                sums = [0] * channels
+                squares = [0] * channels
                 remaining = frames
                 while remaining:
                     block_frames = min(8192, remaining)
@@ -83,11 +86,38 @@ def _verify_capture_file(root, filename, digest, name, sample_rate, problems, re
                     if len(block) != block_frames * channels * sample_width:
                         problems.append(name + " PCM sample data is truncated")
                         break
-                    if not has_signal and any(block):
-                        has_signal = True
+                    if require_signal and sample_width in (2, 3, 4) and channels in (1, 2):
+                        # Exact integer moments per channel reject a nonzero
+                        # constant DC waveform without overflow/cancellation.
+                        # Decode signed little-endian PCM; no NumPy dependency.
+                        if sample_width in (2, 4):
+                            code = "h" if sample_width == 2 else "i"
+                            values = struct.unpack("<" + code * (block_frames * channels), block)
+                            for ch in range(channels):
+                                samples = values[ch::channels]
+                                counts[ch] += len(samples)
+                                sums[ch] += sum(samples)
+                                squares[ch] += sum(s * s for s in samples)
+                        else:
+                            for index in range(0, len(block), sample_width):
+                                ch = (index // sample_width) % channels
+                                sample = int.from_bytes(block[index:index + sample_width],
+                                                        "little", signed=True)
+                                counts[ch] += 1
+                                sums[ch] += sample
+                                squares[ch] += sample * sample
                     remaining -= block_frames
-                if require_signal and not has_signal:
-                    problems.append(name + " stimulus is digitally silent; a calibrated excitation is required")
+                if require_signal and sample_width in (2, 3, 4) and channels in (1, 2):
+                    full_scale = 1 << (8 * sample_width - 1)
+                    active = any(
+                        counts[ch] > 0 and
+                        counts[ch] * squares[ch] - sums[ch] * sums[ch] >
+                        (counts[ch] * full_scale * 1e-6) ** 2
+                        for ch in range(channels)
+                    )
+                    if not active:
+                        problems.append(name + " stimulus is DC-only or digitally silent; "
+                                        "a calibrated AC excitation is required")
             return {"path": target, "sample_rate": rate, "frames": frames,
                     "channels": channels, "sample_width": sample_width}
     except (OSError, RuntimeError, EOFError, wave.Error, ValueError) as exc:

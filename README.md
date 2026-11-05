@@ -22,6 +22,15 @@ than it could support.
 > specifications from DIY-clone component values. The missing evidence must be collected before a
 > parity claim can be made.
 
+**Round 3 electrical audit:** the *drawn-schematic* model now has opt-in
+Q2 bootstrap-capacitor current and rail-aware Sallen-Key feedback (including
+the IC4_B stage embedded in the bridged-T); an optional receiving-load setting
+covers the quarter-inch output. The fitted production defaults are deliberately
+unchanged. The capture comparator now withholds grades on repeated chirps and
+suspected ADC clipping. See [Round 3 circuit evidence](docs/round3-circuit-evidence.md).
+The earlier SPICE residual figures below are **pre-Round-3 baseline figures**
+until the full schematic/CI gates are rerun; they have not been re-certified.
+
 ![Obsidian B7000 plugin UI](image.png)
 
 **[Releases from this repository](https://github.com/boop-bip80/87k-ultra-bass-di/releases)**
@@ -118,7 +127,7 @@ fitted scaled pair (`FitParams.h`).
 
 ### Additional numerical checks, not physical-parity evidence
 
-The latest engineering pass has added independent mathematical and robust-input tests around the
+The previous engineering pass added independent mathematical and robust-input tests around the
 existing model. It corrects small-signal cancellation in the J201 waveshaper antiderivatives, tests
 the coupled bridged-T/Sallen-Key branch values with magnitude **and phase**, checks the two-MOSFET
 CMOS approximation against independent current-law cases, and exercises model/switch transitions under
