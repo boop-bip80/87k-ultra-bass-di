@@ -241,6 +241,4 @@ This project is licensed under the [GNU Affero General Public License v3.0](LICE
 (AGPLv3), the same license under which the open-source edition of JUCE is distributed.
 chowdsp_wdf and xsimd are compatible and included under their own license terms in `libs/`.
 
-## Author
 
-Leigh Pierce ([@tehguitarist](https://github.com/tehguitarist))
