@@ -174,6 +174,12 @@ target_link_libraries(SchematicParityTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(SchematicParityTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME SchematicParityTest COMMAND SchematicParityTest)
 
+# The plugin's runtime MODEL switch: allocation-free (counting operator new), reversible, finite.
+add_executable(ModelSwitchTest tests/ModelSwitchTest.cpp)
+target_link_libraries(ModelSwitchTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(ModelSwitchTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ModelSwitchTest COMMAND ModelSwitchTest)
+
 add_executable(FinalSweepTest tests/FinalSweepTest.cpp)
 target_link_libraries(FinalSweepTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(FinalSweepTest PRIVATE ${PEDAL_WARNING_FLAGS})

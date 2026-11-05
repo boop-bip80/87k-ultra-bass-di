@@ -83,6 +83,7 @@ public:
     // OS-factor change because prepareOd() re-prepares from those same values.
     void setFitParams(const FitParams& f) { chain.setFitParams(f); }
     const FitParams& getFitParams() const noexcept { return chain.getFitParams(); }
+    void primePhysicalTables() { chain.primePhysicalTables(); } // prepare-time only (see PedalChain)
 
     // Choose the oversampling factor for this block (order = log2 factor, 0..3).
     // Cheap when unchanged; re-prepares the OD region + delay length on a change.

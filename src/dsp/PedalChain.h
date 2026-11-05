@@ -469,6 +469,15 @@ public:
 
     const FitParams& getFitParams() const noexcept { return fit; }
 
+    // Pre-build the physical CD4049 VTC tables so setFitParams() can later be called on the AUDIO thread
+    // (the plugin's runtime SCHEMATIC switch) without allocating. Prepare-time only. The shadow clipper is
+    // primed too, because it is primed-by-copy from the live one on a GRUNT flip but is also assigned here.
+    void primePhysicalTables(double vcc = 8.65, double r19 = 1.0e3)
+    {
+        clipper.primePhysicalTables(vcc, r19);
+        clipperShadow.primePhysicalTables(vcc, r19);
+    }
+
     // ---- Split interface (PedalDSP inserts OS + clean-tap delay between) -----
 
     // Base-rate: IC1_A buffer output — the node that feeds BOTH the OD path and

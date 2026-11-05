@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <tuple>
 #include <vector>
 
 // =============================================================================
@@ -262,6 +265,22 @@ inline std::shared_ptr<const Table> buildTable(Device d, double vcc, double r19,
         t->m[i] = 3.0 * (h0 + h1) / ((2.0 * h1 + h0) / s0 + (h1 + 2.0 * h0) / s1);
     }
     return t;
+}
+
+// Process-wide cache so every channel / every Clipper copy shares ONE table per (device, vcc, r19).
+// NOT realtime-safe (mutex + a ~0.13 s build on a miss): call from prepare/fit time only. The plugin's
+// audio thread never calls this — it selects among tables a Clipper already holds (see
+// Clipper::primePhysicalTables).
+inline std::shared_ptr<const Table> cachedTable(Device d, double vcc, double r19)
+{
+    static std::mutex m;
+    static std::map<std::tuple<int, double, double>, std::shared_ptr<const Table>> cache;
+    std::lock_guard<std::mutex> lock(m);
+    const auto key = std::make_tuple(static_cast<int>(d), vcc, r19);
+    auto it = cache.find(key);
+    if (it == cache.end())
+        it = cache.emplace(key, buildTable(d, vcc, r19, -4.0, 8.0)).first;
+    return it->second;
 }
 
 } // namespace cmosvtc

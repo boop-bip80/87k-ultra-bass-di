@@ -121,6 +121,8 @@ private:
     std::atomic<float>* pLoMidFreq = nullptr;
     std::atomic<float>* pHiMidFreq = nullptr;
     std::atomic<float>* pDistEngage = nullptr;
+    std::atomic<float>* pSchematic = nullptr;   // MODEL switch (see processBlock)
+    bool schematicApplied = false;               // audio-thread-owned: which FitParams the DSP currently runs
     std::atomic<float>* pInputTrim = nullptr;
     std::atomic<float>* pOutputTrim = nullptr;
     std::atomic<float>* pOversampling = nullptr;

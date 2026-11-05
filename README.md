@@ -85,7 +85,7 @@ fitted scaled pair (`FitParams.h`).
 **Short version:** the repository contains two configurations of the same model, and they answer
 different questions.
 
-| | **shipped (default)** | **schematic** (`--schematic` / `-DOBSIDIAN_SCHEMATIC_MODEL=ON`) |
+| | **shipped (default)** | **schematic** (plugin **MODEL → DRAWN** button, bottom strip; `--schematic` offline) |
 |---|---|---|
 | constants | fitted to reference captures of an Ultra | the drawn component values of the B7K-clone schematic |
 | OD correction stages | `OdToneRestore`, `OdMakeup`, `OdDriveTilt` on | bypassed |
@@ -169,6 +169,7 @@ The build also produces the calibration/diagnostic tooling used during developme
 | `OfflineRender` | Renders a WAV through the real `PedalChain`/`PedalDSP` at given knob-space settings, mirroring `processBlock` exactly, for A/B against a capture. `--fit name=value` overrides any calibration constant without a rebuild. |
 | `EditorSnapshot` | Headless render of the plugin editor to PNGs at min/default/max UI scale — no display needed |
 | `OSValidationTest` | Oversampling aliasing + delay-compensation gate (registered with CTest) |
+| `ModelSwitchTest` | The plugin's runtime MODEL switch: zero heap allocations (counting `operator new`), reversible bit-for-bit, finite, and the two configurations genuinely differ |
 | `SchematicParityTest` | The plugin in schematic configuration vs committed ngspice data (clean path, OD small-signal, CD4049 large-signal, inverter bias point); needs no ngspice at run time |
 | `InputBufferTest`, `TrebleAttackTest`, `DriveStageTest`, `RecoveryBridgedTTest`, `SallenKeyLPFTest`, `LevelBlendTest`, `MidBandTest`, `BaxandallTest`, `EqPreGainTest`, `MasterOutTest`, `JfetStageTest`, `ClipperTest`, `PedalChainTest` | Per-stage DSP correctness tests (see `tests/`), each checked against a closed-form oracle in `analysis/eq_reference.py` |
 
@@ -177,15 +178,11 @@ cmake --build build           # build everything, including the probes
 ctest --test-dir build --output-on-failure -j 4
 ```
 
-To build the plugin with the **drawn-schematic model** instead of the capture-calibrated one:
-
-```bash
-cmake -B build_schem -DCMAKE_BUILD_TYPE=Release -DOBSIDIAN_SCHEMATIC_MODEL=ON
-cmake --build build_schem --target ObsidianB7000_VST3
-```
-
-It sounds different (tighter, louder OD path; physical clipper) and is the configuration gated against
-ngspice by `ctest -R SchematicParityTest`. `OfflineRender --schematic` renders it offline.
+The **drawn-schematic model** is selectable inside the plugin: the **MODEL / DRAWN** button in the bottom
+strip (off by default = the capture-calibrated build). Switching is allocation-free but causes a brief
+transient (`ctest -R ModelSwitchTest`). It sounds different — tighter, louder OD path, physical clipper — and
+is the configuration gated against ngspice by `ctest -R SchematicParityTest`. `OfflineRender --schematic`
+renders it offline, and `cmake -DOBSIDIAN_SCHEMATIC_MODEL=ON` builds a plugin whose *default* is DRAWN.
 
 The Python side of the calibration harness needs NumPy/SciPy (and `ngspice` for
 `analysis/spice_reference/`):
