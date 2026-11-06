@@ -72,6 +72,17 @@ Q1 drain compliance and nonlinear Q2 behavior are still not modeled or
 measured. The new source SPICE job is advisory until a real CI run is assessed.
 None of these additions establishes retail Ultra circuitry or audio parity.
 
+**Round 7 physical-model research:** the
+[transistor/rail acceptance matrix](docs/round7-physical-model-acceptance.md)
+defines independent SPICE, DC-bias, device-region, ATTACK-crossfade, and
+default-compatibility gates before a nonlinear Q1/Q2 model could replace any
+part of the existing audio path. It does not represent a completed retail
+hardware calibration or authorize enabling unverified behavior by default.
+The [component-by-component primary-source evidence ledger](docs/round7-retail-evidence.md)
+distinguishes the DIY clone's Q2 source-follower wiring, conflicting dated
+clone BOM revisions, and published retail specifications from unknown
+Darkglass internals.
+
 ![Obsidian B7000 plugin UI](image.png)
 
 **[Releases from this repository](https://github.com/boop-bip80/87k-ultra-bass-di/releases)**
