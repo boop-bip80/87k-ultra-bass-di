@@ -204,6 +204,13 @@ add_executable(JfetDevicePhysicsTest tests/JfetDevicePhysicsTest.cpp)
 target_compile_options(JfetDevicePhysicsTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME JfetDevicePhysicsTest COMMAND JfetDevicePhysicsTest)
 
+# Independent 100k-case signed NJF oracle and gate-overflow regression;
+# labels Q2 gate-forward corners where the channel-only DC root is not a
+# validated physical operating point.
+add_executable(JfetDeviceAdversarialTest tests/JfetDeviceAdversarialTest.cpp)
+target_compile_options(JfetDeviceAdversarialTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetDeviceAdversarialTest COMMAND JfetDeviceAdversarialTest)
+
 # Experimental coupled J201 Q1 source/drain port and loaded Q2/ATTACK network.
 # Requires explicit caller opt-in; shipped PedalChain remains unchanged.
 add_executable(JfetTrebleCoupledTest tests/JfetTrebleCoupledTest.cpp)
@@ -215,6 +222,17 @@ add_test(NAME JfetTrebleCoupledTest COMMAND JfetTrebleCoupledTest)
 add_executable(JfetTrebleCoupledStressTest tests/JfetTrebleCoupledStressTest.cpp)
 target_compile_options(JfetTrebleCoupledStressTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME JfetTrebleCoupledStressTest COMMAND JfetTrebleCoupledStressTest)
+
+# Research-only all-warm ATTACK crossfade. Each branch owns a coupled Q1 C2/C3
+# state and complete Q2/treble port. Does not enter the shipped PedalChain.
+add_executable(CoupledAttackResearchTest tests/CoupledAttackResearchTest.cpp)
+target_compile_options(CoupledAttackResearchTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME CoupledAttackResearchTest COMMAND CoupledAttackResearchTest)
+
+# Research-only hypothetical rail mapping; numerical invariants are checked,
+# but rail excursions are reported rather than used as a CTest gate.
+add_executable(JfetTrebleRailDiagnostic tests/JfetTrebleRailDiagnostic.cpp)
+target_compile_options(JfetTrebleRailDiagnostic PRIVATE ${PEDAL_WARNING_FLAGS})
 
 # The only test that ENABLES the rail clamp — every stage test runs it off (the
 # default) against a linear oracle, which is how the signed-railNeg DC bug
@@ -257,6 +275,14 @@ target_compile_options(ClipperDiodePerf PRIVATE ${PEDAL_WARNING_FLAGS})
 add_executable(ExperimentalRealtimeTest tests/ExperimentalRealtimeTest.cpp)
 target_compile_options(ExperimentalRealtimeTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME ExperimentalRealtimeTest COMMAND ExperimentalRealtimeTest)
+
+# Standalone research-mode/paired-port timing report at 8/48/384 kHz.
+# Timings are diagnostic only; finite output and no audio-path heap allocation
+# are the gates. Full-chain research flags and coupled JFET-port use are distinct.
+add_executable(ResearchPhysicsPerf tests/ResearchPhysicsPerf.cpp)
+target_link_libraries(ResearchPhysicsPerf PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(ResearchPhysicsPerf PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME ResearchPhysicsPerf COMMAND ResearchPhysicsPerf)
 
 # Validates the *generic* CD4049 inverter's KCL/supply-drop solve, self-bias
 # and interpolation independently of any claims about a retail Ultra PCB.

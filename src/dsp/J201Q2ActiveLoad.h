@@ -34,6 +34,11 @@ struct BiasPoint {
     double passiveCurrentAmp = 0.0;
     double sourceKclResidualAmp = 0.0;
     double outputKclResidualAmp = 0.0;
+    // The channel-only solve neglects gate diode current. An otherwise
+    // mathematically valid KCL root with this flag true is outside its
+    // reverse-biased-gate assumption, not a validated DC operating point.
+    double q2GateSourceVolt = 0.0; // Q2 gate minus source/output voltage
+    bool q2GateForwardBiased = false;
 };
 
 // Forward-conduction NJFET Level-1 Shichman-Hodges / ngspice B=1, lambda=0.
@@ -104,6 +109,8 @@ inline bool solveDc(const Circuit& c, BiasPoint& result) noexcept {
     p.outputVolt = lower + 0.5 * (upper - lower);
     p.q1SourceVolt = sourceForOutput(p.outputVolt);
     p.q2GateVolt = gate2;
+    p.q2GateSourceVolt = gate2 - p.outputVolt;
+    p.q2GateForwardBiased = p.q2GateSourceVolt > 0.0;
     p.q1DrainCurrentAmp = njfetDrainCurrent(c.q1, 0.0, p.outputVolt, p.q1SourceVolt);
     p.q2DrainCurrentAmp = njfetDrainCurrent(c.q2, gate2, c.supplyVolt, p.outputVolt);
     p.passiveCurrentAmp = p.outputVolt / loadOhm;

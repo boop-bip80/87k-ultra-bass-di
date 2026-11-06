@@ -58,6 +58,14 @@ values 0.5 mA / −0.718 V are illustrative, not device-calibrated.
 - Gate current, gate diode forward conduction, channel-length modulation,
   capacitance, temperature, reverse operation, bias resistor tolerances and
   uncertain device samples are outside this idealized DC model.
+- `BiasPoint::q2GateSourceVolt = q2GateVolt - outputVolt`, and
+  `q2GateForwardBiased` is true whenever that difference exceeds zero. In this
+  case `solveDc` still reports the **mathematical channel-only KCL root**, but
+  not a validated physical gate-bias operating point: its neglected gate-diode
+  branch may carry current. An independent adversarial survey found this flag
+  in 3 of 81 illustrative parameter combinations (worst +0.13727 V Q2 gate
+  above source); the nominal combination is reverse-biased. The flag alone
+  does not quantify the omitted gate current without a calibrated junction.
 - The **clone** schematic/BOM revisions disagree in places and cannot be
   presented as an independently verified retail Black Mirror VII circuit.
   A retailer's internal voltages or charge pump cannot be inferred from it.

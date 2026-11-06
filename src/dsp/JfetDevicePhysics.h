@@ -63,15 +63,38 @@ inline double channelDrainCurrentAmps(const Level1NjfetParameters& p,
 
 // Optional *DC* gate-to-terminal junction current. Positive means gate ->
 // terminal. No dynamic Cgs/Cgd, breakdown, or SPICE limiter is modeled.
+// Fail closed with NaN if finite, but out-of-model, forward bias would exceed
+// the representable current range. In particular, a disabled junction (Is=0)
+// must remain exactly zero rather than letting 0 * expm1(+Inf) become NaN.
 inline double gateJunctionCurrentAmps(const Level1NjfetParameters& p,
                                      double gateVolts, double terminalVolts) noexcept {
     if (!validParameters(p) || !std::isfinite(gateVolts) ||
         !std::isfinite(terminalVolts))
         return std::numeric_limits<double>::quiet_NaN();
 
+    if (p.gateSaturationCurrentAmps == 0.0)
+        return 0.0;
+
     const double normalized = (gateVolts - terminalVolts) /
                               (p.gateIdealityFactor * p.thermalVoltageVolts);
-    return p.gateSaturationCurrentAmps * std::expm1(normalized);
+    if (!std::isfinite(normalized))
+        return std::numeric_limits<double>::quiet_NaN();
+
+    // expm1(x) itself overflows near x=710 even when Is*exp(x) still fits.
+    // Work in the log domain for large positive x to avoid that artifact.
+    double current;
+    if (normalized < 700.0) {
+        current = p.gateSaturationCurrentAmps * std::expm1(normalized);
+    } else {
+        const double logCurrent = std::log(p.gateSaturationCurrentAmps) + normalized;
+        if (!std::isfinite(logCurrent) ||
+            logCurrent > std::log(std::numeric_limits<double>::max()))
+            return std::numeric_limits<double>::quiet_NaN();
+        // At x >= 700, the omitted -Is term is negligible in double.
+        current = std::exp(logCurrent);
+    }
+    return std::isfinite(current) ? current
+                                  : std::numeric_limits<double>::quiet_NaN();
 }
 
 struct ResistorLoadSolution {
