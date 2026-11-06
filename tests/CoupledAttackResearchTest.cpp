@@ -129,6 +129,53 @@ void run(double fs, unsigned fadeSamples)
     }
 }
 
+// Public APIs may receive a numerically invalid enum cast from external
+// configuration. No out-of-bounds branch/weight access is permitted, and a
+// rejected switch during a fade must leave that fade and all histories intact.
+void invalidAttackEnumRegression()
+{
+    for (const Attack bad : {static_cast<Attack>(99), static_cast<Attack>(-1)})
+    {
+        CoupledAttackResearch invalid, reference;
+        invalid.prepare(48000.0, bad, 131);
+        reference.prepare(48000.0, Attack::Flat, 131);
+        check(invalid.selectedAttack() == Attack::Flat,
+              "malformed initial enum did not select safe Flat", 48000.0, 0);
+        check(invalid.blendWeights() == reference.blendWeights(),
+              "malformed initial enum damaged weight array", 48000.0, 0);
+        for (int n = 0; n < 300; ++n)
+        {
+            if (n == 40 || n == 150)
+            {
+                const auto next = n == 40 ? Attack::Cut : Attack::Boost;
+                invalid.selectAttack(next);
+                reference.selectAttack(next);
+            }
+            if (n == 50 || n == 190)
+            {
+                // Both rejection points fall within a 131-sample fade.
+                const auto previous = invalid.blendWeights();
+                const auto previousTarget = invalid.selectedAttack();
+                invalid.selectAttack(bad);
+                check(invalid.blendWeights() == previous &&
+                      invalid.selectedAttack() == previousTarget,
+                      "malformed enum retarget interrupted fade", 48000.0, n);
+            }
+            const double x = std::sin(0.091 * n) + 0.7 * std::cos(0.117 * n);
+            check(invalid.process(x) == reference.process(x),
+                  "malformed enum altered branch histories or blend", 48000.0, n);
+            check(invalid.blendWeights() == reference.blendWeights(),
+                  "malformed enum altered fade weights", 48000.0, n);
+            check(invalid.branchOutput(bad) == invalid.branchOutput(Attack::Flat),
+                  "malformed probe indexed outside Flat branch", 48000.0, n);
+            check(invalid.branchPortError(bad) == invalid.branchPortError(Attack::Flat),
+                  "malformed port probe indexed outside Flat branch", 48000.0, n);
+            check(invalid.branchSourceVoltage(bad) == invalid.branchSourceVoltage(Attack::Flat),
+                  "malformed source probe indexed outside Flat branch", 48000.0, n);
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -141,6 +188,8 @@ int main()
     const auto w = immediate.blendWeights();
     check(w[0] == 0.0 && w[1] == 0.0 && w[2] == 1.0,
           "explicit zero-duration switch not immediate", 48000.0, 0);
+    invalidAttackEnumRegression();
     std::printf("Coupled ATTACK 3-way isolated Q1 C2/C3 + treble port PASS: "
-                "3 sample rates, rapid retarget, exact settle, drain KCL, reset\n");
+                "3 sample rates, rapid retarget, exact settle, drain KCL, reset,"
+                " malformed enum guards\n");
 }

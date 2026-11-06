@@ -83,6 +83,33 @@ distinguishes the DIY clone's Q2 source-follower wiring, conflicting dated
 clone BOM revisions, and published retail specifications from unknown
 Darkglass internals.
 
+**Round 7 verified research checkpoints (still default-OFF):** An
+[independent native ngspice Level-1 NJFET oracle](docs/round7-native-njf-oracle.md)
+checks 160 DC points including reverse drain/source orientation; an
+[absolute clone Q1/Q2 bias solver](docs/j201-q2-active-load.md) exercises
+81 parameter pairs and reports both transistor KCL residuals. The separate
+[native Q2 source-follower SPICE check](analysis/spice_reference/q2_source_follower_dc.md)
+agrees with the simplified nominal bias to within approximately **8 mV**, with
+the non-identical J201 device assumptions made explicit. Three of those
+81 combinations forward-bias Q2's gate, which is **flagged as outside the
+channel-only solver's physical assumptions**. A separate
+[device primitive](docs/round7-jfet-intrinsic-9v.md) covers cutoff, triode,
+saturation and a bounded single-transistor load line, with adversarial diode
+overflow checks. The [three-branch coupled ATTACK experiment](docs/coupled-attack-research.md)
+isolates JFET C2/C3 state per switch throw; the
+[full-chain mode/switch stress](docs/round7-mode-switch-regression.md) and
+research timing executable check finite outputs and observed allocations.
+The [rail plausibility diagnostic](docs/RAIL_DIAGNOSTIC.md) finds that the
+**existing incremental coupled-stage model can imply voltages outside an
+assumed supply** under hard drive. These are mathematical and engineering
+results for the **clone-inspired research models**. They neither prove
+retail B7K Ultra accuracy nor enable a fully coupled, rail-compliant
+Q1/Q2/ATTACK model in the production audio path.
+The hardware-capture verifier also rejects byte-identical playback WAV data
+presented under another filename as a supposedly independent pedal-input
+monitor. That protects measurement provenance; it cannot create the absent
+real-pedal measurement set.
+
 ![Obsidian B7000 plugin UI](image.png)
 
 **[Releases from this repository](https://github.com/boop-bip80/87k-ultra-bass-di/releases)**

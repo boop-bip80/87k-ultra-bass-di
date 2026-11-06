@@ -38,7 +38,9 @@ public:
             b.treble.setAttack(static_cast<Attack>(i));
         }
         fadeLength = fadeSamples;
-        target = initial;
+        // An enum can be cast from an out-of-range host/control integer.
+        // Never let that value index a three-entry weights/branch array.
+        target = validAttack(initial) ? initial : Attack::Flat;
         reset();
     }
 
@@ -61,7 +63,8 @@ public:
     // still uses those weights; subsequent samples linearly approach the target.
     void selectAttack(Attack next) noexcept
     {
-        if (next == target)
+        // Ignore malformed enum casts without interrupting an ongoing fade.
+        if (!validAttack(next) || next == target)
             return;
         target = next;
         fadeStart = weights;
@@ -126,9 +129,16 @@ private:
         double portError = 0.0;
     };
 
+    static constexpr bool validAttack(Attack pos) noexcept
+    {
+        return pos == Attack::Boost || pos == Attack::Flat || pos == Attack::Cut;
+    }
+
     static constexpr std::size_t index(Attack pos) noexcept
     {
-        return static_cast<std::size_t>(pos);
+        // Probes of an invalid position are read-only and refer to Flat.
+        // The control-facing paths above always store a valid target.
+        return pos == Attack::Boost ? 0U : pos == Attack::Cut ? 2U : 1U;
     }
 
     static constexpr Weights oneHot(Attack pos) noexcept

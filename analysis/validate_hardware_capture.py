@@ -232,6 +232,11 @@ def validate(path):
             problems.append(name + " playback source, recorded loaded-input monitor and pedal output must be separate WAV files")
         if dry_wav and pedal_wav and take.get("sha256") == take.get("dry_input_sha256"):
             problems.append(name + " dry input monitor and pedal output are byte-identical, not independently recorded")
+        if (dry_wav and stimulus_wav and isinstance(take.get("stimulus_sha256"), str)
+                and SHA256_RE.fullmatch(take["stimulus_sha256"])
+                and take["stimulus_sha256"] == take.get("dry_input_sha256")):
+            problems.append(name + " loaded-input monitor is byte-identical to the playback stimulus; "
+                            "it must be a separate physical recording")
         if dry_wav and pedal_wav and dry_wav["sample_rate"] and pedal_wav["sample_rate"]:
             durations = (dry_wav["frames"] / dry_wav["sample_rate"],
                          pedal_wav["frames"] / pedal_wav["sample_rate"])

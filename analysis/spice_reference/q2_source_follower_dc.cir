@@ -1,0 +1,20 @@
+* Black Mirror VII 1.6v Q1/Q2 DC bias; independent ngspice reference
+* Q2 is a source follower: drain=9V, gate=4.5V, source=outg.
+* This is a nominal-model oracle, not a prediction of a retail J201 sample.
+VCC v9 0 9
+.model J201 NJF(VTO=-0.718 BETA=1.031m LAMBDA=2m IS=114.5f RD=1 RS=1 CGD=4.667p CGS=2.992p M=.2271 PB=.5 FC=.5)
+R5 q1g 0 1Meg
+J1 outg q1g q1s J201
+R6 q1s 0 3.3k
+J2 v9 q2g outg J201
+R9 v9 q2g 1Meg
+R10 q2g 0 1Meg
+R7 outg m 200k
+R8 m p 470k
+R11 p 0 470k
+.control
+op
+print v(q1s) v(q2g) v(outg)
+quit
+.endc
+.end

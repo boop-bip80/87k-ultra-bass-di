@@ -234,6 +234,12 @@ add_test(NAME CoupledAttackResearchTest COMMAND CoupledAttackResearchTest)
 add_executable(JfetTrebleRailDiagnostic tests/JfetTrebleRailDiagnostic.cpp)
 target_compile_options(JfetTrebleRailDiagnostic PRIVATE ${PEDAL_WARNING_FLAGS})
 
+# Independent direct-Thevenin fuzz, including broad source/drain/gate values,
+# 1e-1..1e14-ohm ports and physical beta/VTO spreads. KCL, not 9V rails.
+add_executable(JfetCoupledPortFuzzTest tests/JfetCoupledPortFuzzTest.cpp)
+target_compile_options(JfetCoupledPortFuzzTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetCoupledPortFuzzTest COMMAND JfetCoupledPortFuzzTest)
+
 # The only test that ENABLES the rail clamp — every stage test runs it off (the
 # default) against a linear oracle, which is how the signed-railNeg DC bug
 # (926c0cc) survived from Phase 4 unnoticed.

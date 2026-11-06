@@ -172,6 +172,22 @@ class CaptureValidatorTests(unittest.TestCase):
             self.assertEqual(result["status"], "UNVERIFIED")
             self.assertTrue(any("reuses a recorded dry-input monitor WAV" in issue for issue in result["problems"]))
 
+    def test_playback_copy_cannot_masquerade_as_loaded_input_monitor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path, manifest = self.make_complete_manifest(root)
+            take = manifest["takes"][0]
+            # A different filename and valid checksum do not turn digital
+            # playback bytes into an independently recorded input monitor.
+            playback = (root / take["stimulus_file"]).read_bytes()
+            (root / take["dry_input_file"]).write_bytes(playback)
+            take["dry_input_sha256"] = hashlib.sha256(playback).hexdigest()
+            path.write_text(json.dumps(manifest))
+            result = validate(path)
+            self.assertEqual(result["status"], "UNVERIFIED")
+            self.assertTrue(any("byte-identical to the playback stimulus" in issue
+                                for issue in result["problems"]))
+
     def test_independent_control_and_switch_sweeps_are_mandatory(self):
         with tempfile.TemporaryDirectory() as tmp:
             path, manifest = self.make_complete_manifest(Path(tmp))

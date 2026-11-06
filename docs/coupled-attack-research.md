@@ -28,6 +28,11 @@ charged C8 (and optionally the switched C5 damping leg) never changes topology.
 Mid-fade retargeting starts from the exact current weights, without a coefficient
 step. This avoids accidentally assigning a single `JfetStage` the state of two
 different sources and keeps a dormant branch coherent for later reactivation.
+The public research wrapper also checks ATTACK enum values before writing its
+three-entry weight and branch arrays. An invalid initial enum defaults to Flat;
+invalid mid-fade selections are ignored (preserving the existing fade), and
+invalid read-only branch probes refer to Flat. These bounds checks do not alter
+the shipped `PedalChain`'s existing, independently validated switch-index path.
 
 This is a **software transition** among hypothetical circuit histories, not an
 assertion that the physical pedal owns three J201s or that a real mechanical
