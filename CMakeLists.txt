@@ -117,6 +117,15 @@ target_link_libraries(SourceLoadingBoundaryTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(SourceLoadingBoundaryTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME SourceLoadingBoundaryTest COMMAND SourceLoadingBoundaryTest)
 
+# Infer the complex Black Mirror VII jack impedance from independently
+# measured offline WDF phasors with a known Thevenin source. Compare against
+# a drawn-value nodal AC oracle at the bilinear-warped analog frequency.
+# This is a clone-circuit regression, not proof of a retail Ultra input port.
+add_executable(InputPortACRegressionTest tests/InputPortACRegressionTest.cpp)
+target_link_libraries(InputPortACRegressionTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(InputPortACRegressionTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME InputPortACRegressionTest COMMAND InputPortACRegressionTest)
+
 # Offline comparison against the Ultra's published 1 MOhm nominal input, without
 # claiming a retail circuit drawing or changing the actual plugin input path.
 add_executable(UltraNominalPortReferenceTest tests/UltraNominalPortReferenceTest.cpp)

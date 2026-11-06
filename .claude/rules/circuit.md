@@ -9,7 +9,11 @@
 > with **switchable Lo-Mid (250/500/1k Hz) and Hi-Mid (750/1.5k/3k Hz) centre frequencies**, plus a
 > 3-way **ATTACK** switch (Boost/Flat/Cut) and a 3-way GRUNT switch, and a balanced XLR DI out with
 > ground-lift. Single 9V supply. Clipping is a **CMOS inverter (CD4049UBE) overdrive**, not a diode
-> clipper (diodes are input clamps only). Input Z 1MΩ, output Z 1kΩ.
+> clipper (diodes are input clamps only). The **retail B7K Ultra manual** publishes
+> nominal input Z **1 MΩ** and output Z **1 kΩ**; these are not verified clone
+> circuit measurements. The transcribed Black Mirror VII input is frequency
+> dependent, approaching **500 kΩ** at audio frequencies under an ideal
+> high-impedance op-amp assumption (see Input & buffer below).
 >
 > ⚠ **Source-fidelity boundary (read this).** Our schematic is the *original B7K* clone. The Ultra
 > features that are NOT on that schematic are **engineered approximations**, tagged **[ENG]** below —
@@ -172,11 +176,20 @@ All ICs (TL072ACP dual, TL074ACN quad, CD4049UBE hex inverter) run on +9V / GND.
 ### Input & buffer (IC1_A)
 | Ref | Value | Function |
 |-----|-------|----------|
-| R1 | 1M | input pulldown to GND (sets ~1MΩ input Z, pop suppression) |
+| R1 | 1M | input pulldown to GND (sets the ~1 MΩ **DC** port resistance, pop suppression; not the full AC input impedance) |
 | C1 | 100n | input coupling |
 | R2 | 1M | bias input node to VD |
 | R3 | 10k | series into IC1_A (+) |
 | IC1_A | TL072ACP | **unity-gain buffer** (pin2 −tied to pin1 out). Output splits: drive path (C2) + clean tap (→ BLEND pin1) |
+
+The **bundled 9 May 2023, rev 1.1v schematic** shows R1 from the jack to
+ground, followed by series C1, with R2 from the post-C1 node to VD. Treating
+VD as AC ground and the IC1_A input as infinite impedance gives
+`Zin(s) = R1 || (R2 + 1/(s*C1))`: **1 MΩ at DC, 500 kΩ at high frequency**
+(approximately `500000.3 - j397.9 Ω` at 1 kHz). R3 carries negligible current
+in this idealized small-signal calculation. The public 1.6v BOM confirms
+the same *values*, but BOM agreement alone does not prove net identity across
+different revisions, and neither drawing is a retail Darkglass schematic.
 
 ### JFET gain stage (Q1/Q2) — active, mildly nonlinear
 | Ref | Value | Function |
