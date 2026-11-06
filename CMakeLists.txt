@@ -191,6 +191,13 @@ add_executable(JfetPhysicalFeedbackTest tests/JfetPhysicalFeedbackTest.cpp)
 target_compile_options(JfetPhysicalFeedbackTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME JfetPhysicalFeedbackTest COMMAND JfetPhysicalFeedbackTest)
 
+# Standalone clone Q1/Q2 source-follower DC operating-point KCL research oracle.
+# These are absolute DC node voltages, not a replacement for the audio path.
+add_executable(J201Q2ActiveLoadTest tests/J201Q2ActiveLoadTest.cpp)
+target_include_directories(J201Q2ActiveLoadTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(J201Q2ActiveLoadTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME J201Q2ActiveLoadTest COMMAND J201Q2ActiveLoadTest)
+
 # Experimental coupled J201 Q1 source/drain port and loaded Q2/ATTACK network.
 # Requires explicit caller opt-in; shipped PedalChain remains unchanged.
 add_executable(JfetTrebleCoupledTest tests/JfetTrebleCoupledTest.cpp)
@@ -290,6 +297,13 @@ add_executable(CircuitResearchModesTest tests/CircuitResearchModesTest.cpp)
 target_link_libraries(CircuitResearchModesTest PRIVATE chowdsp::chowdsp_wdf)
 target_compile_options(CircuitResearchModesTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME CircuitResearchModesTest COMMAND CircuitResearchModesTest)
+
+# Repeated knob/selectors updates with both default and opt-in physical modes.
+# This is a numerical/bit-idempotence gate, not proof of hardware rail parity.
+add_executable(Round7ModeSwitchStressTest tests/Round7ModeSwitchStressTest.cpp)
+target_link_libraries(Round7ModeSwitchStressTest PRIVATE chowdsp::chowdsp_wdf)
+target_compile_options(Round7ModeSwitchStressTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME Round7ModeSwitchStressTest COMMAND Round7ModeSwitchStressTest)
 
 add_executable(FinalSweepTest tests/FinalSweepTest.cpp)
 target_link_libraries(FinalSweepTest PRIVATE chowdsp::chowdsp_wdf)
