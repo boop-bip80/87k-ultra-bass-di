@@ -198,6 +198,12 @@ target_include_directories(J201Q2ActiveLoadTest PRIVATE ${CMAKE_CURRENT_SOURCE_D
 target_compile_options(J201Q2ActiveLoadTest PRIVATE ${PEDAL_WARNING_FLAGS})
 add_test(NAME J201Q2ActiveLoadTest COMMAND J201Q2ActiveLoadTest)
 
+# Independent Level-1 JFET device primitive, reverse polarity and bounded
+# single-transistor source/drain KCL; experimental model only.
+add_executable(JfetDevicePhysicsTest tests/JfetDevicePhysicsTest.cpp)
+target_compile_options(JfetDevicePhysicsTest PRIVATE ${PEDAL_WARNING_FLAGS})
+add_test(NAME JfetDevicePhysicsTest COMMAND JfetDevicePhysicsTest)
+
 # Experimental coupled J201 Q1 source/drain port and loaded Q2/ATTACK network.
 # Requires explicit caller opt-in; shipped PedalChain remains unchanged.
 add_executable(JfetTrebleCoupledTest tests/JfetTrebleCoupledTest.cpp)
